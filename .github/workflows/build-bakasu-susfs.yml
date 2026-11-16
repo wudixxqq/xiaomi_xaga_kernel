@@ -10,7 +10,7 @@ on:
       bakasu_ref:
         description: 'BakaSU kernel driver ref (main / commit)'
         required: false
-        default: '252b15203940'
+        default: '5d6d1843c893'
       enable_susfs:
         description: 'Integrate kernel-level SUSFS'
         type: boolean
@@ -30,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BAKASU_REF_DEFAULT: 252b15203940
+  BAKASU_REF_DEFAULT: 5d6d1843c893
 
 jobs:
   build:

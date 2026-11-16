@@ -9,7 +9,7 @@
 #   - config          : final .config (IKCONFIG) for verification
 #   - README / notes  : version provenance, flash steps, verification
 #
-# Driver : BakaSU latest CI kernel commit (default 252b1520, 2026-11-16)
+# Driver : BakaSU main @ 5d6d1843 (latest CI-passing kernel driver, 2026-11-15)
 # SUSFS  : official susfs4ksu @ gki-android12-5.10 (kernel-side patch)
 # Kernel : aosp-mirror/kernel_common @ 81e7418c (GKI android12-5.10 KMI)
 # Stock  : user-provided V14.0.6.0 boot.img (sha 8a818f31..., 5.10.136-...)
@@ -34,7 +34,7 @@ CLANG_BRANCH="${CLANG_BRANCH:-lineage-20.0}"
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 
 BAKASU_REPO="${BAKASU_REPO:-https://github.com/Baka-SU/BakaSU.git}"
-BAKASU_REF="${BAKASU_REF:-252b15203940}"        # latest CI kernel driver commit
+BAKASU_REF="${BAKASU_REF:-5d6d1843c893}"        # latest CI-passing main HEAD (252b1520 had a link bug)
 SUSFS_REPO="${SUSFS_REPO:-https://gitlab.com/simonpunk/susfs4ksu.git}"
 SUSFS_BRANCH="${SUSFS_BRANCH:-gki-android12-5.10}"
 MAGISK_URL="${MAGISK_URL:-https://github.com/topjohnwu/Magisk/releases/download/v31.1/Magisk-v31.1.apk}"
