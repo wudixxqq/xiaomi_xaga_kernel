@@ -167,12 +167,27 @@ else
   if [[ ! -d "${WORK_DIR}/susfs4ksu/.git" ]]; then
     git clone --depth=1 -b "${SUSFS_BRANCH}" "${SUSFS_REPO}" "${WORK_DIR}/susfs4ksu"
   fi
-  # Kernel-side SUSFS core files
-  cp -rf "${WORK_DIR}/susfs4ksu/kernel_patches/fs/." "${KERNEL_DIR}/fs/"
-  cp -rf "${WORK_DIR}/susfs4ksu/kernel_patches/include/linux/." "${KERNEL_DIR}/include/linux/"
+  # Kernel-side SUSFS core files — use vendored copies first (self-contained),
+  # fall back to the public susfs4ksu mirror if not present.
+  SUSFS_VENDOR_DIR="${SUSFS_VENDOR_DIR:-${KERNEL_DIR}/patches}"
+  if [[ -f "${SUSFS_VENDOR_DIR}/fs/susfs.c" ]]; then
+    log "Using vendored SUSFS sources from ${SUSFS_VENDOR_DIR}"
+    cp -f "${SUSFS_VENDOR_DIR}/fs/susfs.c" "${KERNEL_DIR}/fs/susfs.c"
+    cp -f "${SUSFS_VENDOR_DIR}/include/linux/susfs.h" "${KERNEL_DIR}/include/linux/susfs.h"
+    cp -f "${SUSFS_VENDOR_DIR}/include/linux/susfs_def.h" "${KERNEL_DIR}/include/linux/susfs_def.h"
+  else
+    if [[ ! -d "${WORK_DIR}/susfs4ksu/.git" ]]; then
+      git clone --depth=1 -b "${SUSFS_BRANCH}" "${SUSFS_REPO}" "${WORK_DIR}/susfs4ksu"
+    fi
+    cp -rf "${WORK_DIR}/susfs4ksu/kernel_patches/fs/." "${KERNEL_DIR}/fs/"
+    cp -rf "${WORK_DIR}/susfs4ksu/kernel_patches/include/linux/." "${KERNEL_DIR}/include/linux/"
+  fi
   # Nova-builtin-adapted integration patch (28 files: fs/mm/selinux hooks)
-  SUSFS_PATCH="${WORK_DIR}/50_add_susfs_gki510_NOVA-BUILTIN.patch"
-  curl -fLSs --retry 3 "${NOVA_SUSFS_PATCH_URL}" -o "${SUSFS_PATCH}" || die "SUSFS patch download failed"
+  SUSFS_PATCH="${SUSFS_VENDOR_DIR}/50_add_susfs_gki510_NOVA-BUILTIN.patch"
+  if [[ ! -f "${SUSFS_PATCH}" ]]; then
+    SUSFS_PATCH="${WORK_DIR}/50_add_susfs_gki510_NOVA-BUILTIN.patch"
+    curl -fLSs --retry 3 "${NOVA_SUSFS_PATCH_URL}" -o "${SUSFS_PATCH}" || die "SUSFS patch download failed"
+  fi
   ( cd "${KERNEL_DIR}" && patch -p1 --forward < "${SUSFS_PATCH}" ) || die "SUSFS patch failed on ${STOCK_KREL} tree"
   # Full SUSFS config set (from owner's gki-susfs.config)
   for cfg in \
