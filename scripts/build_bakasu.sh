@@ -192,10 +192,14 @@ SUSFS_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'susfs' || true)
 info "KernelSU strings: $KSU_STR | SUSFS strings: $SUSFS_STR"
 echo "KernelSU strings: $KSU_STR" > "$ARTIFACTS/symbol-counts.txt"
 echo "SUSFS strings: $SUSFS_STR" >> "$ARTIFACTS/symbol-counts.txt"
-# CFI on-device proof: with CFI_CLANG=y every TU emits __cfi_check.
+# CFI on-device proof: with CFI_CLANG=y the final image contains __cfi_check.
+# NOTE: ThinLTO merges the per-TU __cfi_check handlers into ONE global one,
+# so exactly 1 occurrence is the expected/healthy result (CI run 43976982235).
+# CFI off => 0 occurrences. Cross-check System.map as well.
 CFI_N=$(strings out/arch/arm64/boot/Image | grep -c '__cfi_check' || true)
-info "__cfi_check occurrences: $CFI_N"
-[[ "${CFI_N:-0}" -ge 100 ]] || die "kernel built without CFI (module_layout CRC will mismatch stock vendor modules)"
+info "__cfi_check occurrences: $CFI_N (ThinLTO merges per-TU handlers into one)"
+[[ "${CFI_N:-0}" -ge 1 ]] || die "kernel built without CFI (module_layout CRC will mismatch stock vendor modules)"
+grep -q '__cfi_check' out/System.map || die "System.map missing __cfi_check (CFI off)"
 
 # ------------------------------ repack boot.img ----------------------------
 info "Repacking boot.img with magiskboot ..."
