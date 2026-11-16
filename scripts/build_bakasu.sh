@@ -148,7 +148,13 @@ make $MAKEARGS gki_defconfig
 # against a CFI-on kernel; with CFI off every vendor module fails
 # "disagrees about version of symbol module_layout", storage drivers never
 # come up, init exits -> Kernel panic -> bootloop. (Verified via ramoops.)
-scripts/config --file out/.config -d LTO_CLANG_FULL
+# Pinned gki_defconfig defaults to LTO_CLANG_FULL=y (OOMs 16GB runner) with
+# CFI_CLANG=y. If we merely -d LTO_CLANG_FULL, the LTO choice falls back to
+# LTO_NONE=y and CFI (depends on LTO) is SILENTLY DROPPED -> module_layout
+# CRC mismatch -> all stock vendor modules fail -> init panic bootloop.
+# Fix = proven recipe from run#4 (6c1d960, verified bootable on xaga):
+# force ThinLTO via kconfig AND make command-line vars.
+scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_NONE -e LTO_CLANG_THIN -e CFI_CLANG
 scripts/config --file out/.config -e KSU
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
   scripts/config --file out/.config \
@@ -158,14 +164,20 @@ if [[ "$ENABLE_SUSFS" == "1" ]]; then
     -e KSU_SUSFS_OPEN_REDIRECT -e KSU_SUSFS_SUS_MAP
 fi
 make $MAKEARGS olddefconfig
+# HARD GATE: vendor-module ABI depends on these; fail fast instead of
+# shipping a kernel that bootloops on device (CI run 43970952769 lesson).
+grep -q '^CONFIG_LTO_CLANG_THIN=y' out/.config || die "LTO_CLANG_THIN not set (CFI would be dropped, vendor CRC mismatch)"
+grep -q '^CONFIG_CFI_CLANG=y' out/.config || die "CFI_CLANG not set (vendor module module_layout CRC will mismatch)"
 info "--- key config ---"
-grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_FULL|CFI_CLANG|MODVERSIONS|MODULE_SCMVERSION|LOCALVERSION|KPROBES)=|^# CONFIG_LOCALVERSION_AUTO' out/.config | tee "$ARTIFACTS/kernel.config.txt"
+grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_THIN|LTO_NONE|CFI_CLANG|MODVERSIONS|MODULE_SCMVERSION|LOCALVERSION|KPROBES)=|^# CONFIG_LOCALVERSION_AUTO' out/.config | tee "$ARTIFACTS/kernel.config.txt"
 info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
 
 # ------------------------------ build --------------------------------------
 info "Building kernel Image (ThinLTO+CFI, jobs=$JOBS) ..."
 export KBUILD_BUILD_USER=build-user KBUILD_BUILD_HOST=build-host KBUILD_BUILD_VERSION=1
-make $MAKEARGS -j"$JOBS" Image 2>&1 | tee "$ARTIFACTS/build.log"
+make $MAKEARGS -j"$JOBS" \
+  CONFIG_LTO_CLANG=y CONFIG_LTO_NONE=n CONFIG_LTO_CLANG_THIN=y CONFIG_LTO_CLANG_FULL=n \
+  Image 2>&1 | tee "$ARTIFACTS/build.log"
 test -f out/arch/arm64/boot/Image || die "Image not built"
 
 # ------------------------------ verify kernel ------------------------------
@@ -177,6 +189,10 @@ SUSFS_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'susfs' || true)
 info "KernelSU strings: $KSU_STR | SUSFS strings: $SUSFS_STR"
 echo "KernelSU strings: $KSU_STR" > "$ARTIFACTS/symbol-counts.txt"
 echo "SUSFS strings: $SUSFS_STR" >> "$ARTIFACTS/symbol-counts.txt"
+# CFI on-device proof: with CFI_CLANG=y every TU emits __cfi_check.
+CFI_N=$(strings out/arch/arm64/boot/Image | grep -c '__cfi_check' || true)
+info "__cfi_check occurrences: $CFI_N"
+[[ "${CFI_N:-0}" -ge 100 ]] || die "kernel built without CFI (module_layout CRC will mismatch stock vendor modules)"
 
 # ------------------------------ repack boot.img ----------------------------
 info "Repacking boot.img with magiskboot ..."
@@ -224,7 +240,7 @@ else
   info "WildKernels clone failed - keeping repo tools/META-INF"
 fi
 # Kernel display name = stock-style release string (matches baked-in banner)
-sed -i "s|^kernel.string=.*|kernel.string=5.10${SCMVERSION_SUFFIX}|" "$AK3/anykernel.sh"
+sed -i "s|^kernel.string=.*|kernel.string=${STOCK_KREL}|" "$AK3/anykernel.sh"
 # gzip the kernel for AK3 (AK3 handles decompression via magiskboot/ak3-core)
 gzip -c out/arch/arm64/boot/Image > "$AK3/Image.gz" 2>/dev/null || \
   cp out/arch/arm64/boot/Image "$AK3/Image"
