@@ -135,12 +135,14 @@ info "Configuring kernel (gki_defconfig + BakaSU + SUSFS) ..."
 MAKEARGS="O=out ARCH=arm64 CC=clang HOSTCC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=$CROSS_COMPILE"
 make $MAKEARGS gki_defconfig
 # GitHub runner has ~16GB RAM and swapon is not permitted; Full LTO link would
-# be OOM-killed. Switch to ThinLTO (far lower peak memory, same KMI).
-# Disable LLVM LTO entirely: Full LTO OOMs the 16GB runner (swapon blocked),
-# and ThinLTO internalizes BakaSU's static selinux_hide_init_setxattr() causing
-# an undefined-symbol link failure. LTO is optional hardening, not part of KMI.
-scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE
-scripts/config --file out/.config -d CFI_CLANG
+# be OOM-killed -> ThinLTO (gki_defconfig default, far lower peak memory).
+# CRITICAL: CFI must stay ON. CONFIG_CFI_CLANG adds `cfi_check_fn cfi_check`
+# to struct module (include/linux/module.h), which changes the module_layout
+# symbol CRC. Stock vendor modules (mkp.ko, ufs-mediatek.ko, ...) are built
+# against a CFI-on kernel; with CFI off every vendor module fails
+# "disagrees about version of symbol module_layout", storage drivers never
+# come up, init exits -> Kernel panic -> bootloop. (Verified via ramoops.)
+scripts/config --file out/.config -d LTO_CLANG_FULL
 scripts/config --file out/.config -e KSU
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
   scripts/config --file out/.config \
@@ -155,7 +157,7 @@ grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_FULL|CFI_CLANG|MODVERSIONS|MODUL
 info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
 
 # ------------------------------ build --------------------------------------
-info "Building kernel Image (no-LTO, jobs=$JOBS) ..."
+info "Building kernel Image (ThinLTO+CFI, jobs=$JOBS) ..."
 export KBUILD_BUILD_USER=build-user KBUILD_BUILD_HOST=build-host KBUILD_BUILD_VERSION=1
 make $MAKEARGS -j"$JOBS" Image 2>&1 | tee "$ARTIFACTS/build.log"
 test -f out/arch/arm64/boot/Image || die "Image not built"
@@ -235,7 +237,7 @@ Flash notes:
   - Bootloader must be unlocked; disable AVB/vbmeta verification for a custom kernel.
   - Flash the matching slot (A/B). AK3 handles slot detection automatically.
   - Kernel release string matches stock (vermagic) so vendor modules still load.
-  - Known limits: Full LTO/CFI disabled for 16GB CI runner (no runtime impact);
+  - Known limits: Full LTO disabled for 16GB CI runner (ThinLTO+CFI kept on for vendor module ABI);
     VMA_PAD_START backported as vm_end for the older 5.10 tree.
 EOF2
 cat > "$ARTIFACTS/flash-fastboot.sh" <<'FLASHEOF'
