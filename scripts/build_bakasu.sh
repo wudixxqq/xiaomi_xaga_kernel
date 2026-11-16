@@ -188,26 +188,15 @@ cd "$WORK/common"
 # ------------------------------ AK3 package --------------------------------
 info "Building AnyKernel3 package ..."
 AK3="$WORK/ak3"; rm -rf "$AK3"; mkdir -p "$AK3"
-cp -rp "$WORK/common/anykernel/." "$AK3/" 2>/dev/null || {
-  # Fallback minimal AK3 template if kernel tree lacks anykernel/
-  mkdir -p "$AK3/META-INF/com/google/android" "$AK3/tools"
-  cat > "$AK3/anykernel.sh" <<'AK3EOF'
-kernel.string=BakaSU+SUSFS kernel for XAGA (MT6895)
-do.devicecheck=0
-do.modules=0
-do.systemless=0
-do.cleanup=1
-do.cleanuponabort=0
-supported.versions=
-supported.patchlevels=
-block=boot
-is_slot_device=1
-ramdisk_compression=auto
-. tools/ak3-core.sh
-dump_boot
-write_boot
-AK3EOF
-}
+# Use the full AnyKernel3 template from THIS repo's checkout (has META-INF/,
+# tools/ak3-core.sh, magiskboot, etc.). kernel_common has no anykernel/.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$REPO_ROOT/anykernel/META-INF/com/google/android/update-binary" ]]; then
+  info "Using full AnyKernel3 template from repo anykernel/"
+  cp -rp "$REPO_ROOT/anykernel/." "$AK3/"
+else
+  die "repo anykernel/ template missing (need META-INF/com/google/android/update-binary)"
+fi
 # gzip the kernel for AK3 (AK3 handles decompression via magiskboot/ak3-core)
 gzip -c out/arch/arm64/boot/Image > "$AK3/Image.gz" 2>/dev/null || \
   cp out/arch/arm64/boot/Image "$AK3/Image"
@@ -228,11 +217,36 @@ Flash:
   - boot.img  : fastboot flash boot boot.img  (single slot) or fastboot flash boot_a/boot_b
   - AK3 zip   : flash via Magisk/Recovery; replaces kernel in boot, keeps stock ramdisk
 
-Notes:
-  - Bootloader must be unlocked; AVB verification disabled (vbmeta) for custom kernel.
-  - SUSFS userspace (ksu_susfs / module) is provided by BakaSU manager; kernel side is integrated here.
-  - Verify SUSFS: boot, open BakaSU manager -> SUSFS page, or in root shell: ksu_susfs version
+SUSFS integration (kernel side - already in this image):
+  - susfs.c / susfs_def.h + 15 fs files hooked; CONFIG_KSU_SUSFS=y and sub-options on.
+  - Kernel image verified: SUSFS strings present (see symbol-counts.txt in the CI artifact).
+
+SUSFS userspace (you must install - kernel patch alone does nothing visible):
+  1) Install a BakaSU manager whose version matches this driver (main @ ${BAKASU_REF:0:12}).
+     Official APK: https://github.com/Baka-SU/BakaSU/releases  /  CI: https://bakasu.org
+  2) In manager: grant root, open the SUSFS page, install/enable the SUSFS module and
+     the ksu_susfs tool (manager pushes it to /data/adb/ksu/bin/).
+  3) Confirm: root shell -> `ksu_susfs version` returns a version; manager SUSFS page
+     shows features as supported.
+
+Flash notes:
+  - Bootloader must be unlocked; disable AVB/vbmeta verification for a custom kernel.
+  - Flash the matching slot (A/B). AK3 handles slot detection automatically.
+  - Kernel release string matches stock (vermagic) so vendor modules still load.
+  - Known limits: Full LTO/CFI disabled for 16GB CI runner (no runtime impact);
+    VMA_PAD_START backported as vm_end for the older 5.10 tree.
 EOF2
+cat > "$AK3/flash-fastboot.sh" <<'FLASHEOF'
+#!/system/bin/sh
+# Optional helper: flash this package's boot.img from fastboot on a connected device.
+# Usage: sh flash-fastboot.sh [boot|boot_a|boot_b]   (default: boot)
+set -e
+PART="${1:-boot}"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+fastboot flash "$PART" "$DIR/boot.img"
+echo "Flashed boot.img to $PART; reboot with: fastboot reboot"
+FLASHEOF
+chmod +x "$AK3/flash-fastboot.sh"
 cd "$AK3"
 ZIP="$ARTIFACTS/AnyKernel3-BakaSU-SUSFS-xaga.zip"
 if command -v 7za >/dev/null 2>&1; then 7za a -mx9 "$ZIP" * >/dev/null
