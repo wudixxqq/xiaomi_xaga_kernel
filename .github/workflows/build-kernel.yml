@@ -86,12 +86,8 @@ jobs:
       - name: Prepare stock boot.img (chunks)
         if: ${{ github.event.inputs.enable_bootimg != 'false' }}
         run: |
-          mkdir -p boot-stock
-          for i in 00 01 02 03; do
-            curl -fsSL --retry 3 \
-              "https://raw.githubusercontent.com/wudixxqq/xaga-kernel-build/main/boot-stock/boot.img.part-$i.part" \
-              -o "boot-stock/boot.img.part-$i.part"
-          done
+          # Chunks are vendored in this repo (boot-stock/boot.img.part-*).
+          test -n "$(ls boot-stock/boot.img.part-* 2>/dev/null)" || { echo "missing boot-stock chunks" >&2; exit 1; }
           cat boot-stock/boot.img.part-*.part > boot-stock/boot.img
           echo "50d5665a81014a9fbc9e22f58acd1f315cf9302ac761fb52251c29f9f98f1429  boot-stock/boot.img" | sha256sum -c -
 
