@@ -190,7 +190,9 @@ sed -i 's/check_defconfig//' "${KERNEL_DIR}/build.config.gki" || true
 # ----------------------------- build ---------------------------------------
 log "Building (jobs=${JOBS}) ..."
 rm -rf "${OUT_DIR}"; mkdir -p "${OUT_DIR}"
-MAKE_ARGS=(CC="${CC_BIN}" CXX="${CXX_BIN}" LLVM=1 LLVM_IAS=1 O=out)
+# Use the basename of OUT_DIR for kernel's O= so output lands where we look.
+O_ARG="$(basename "${OUT_DIR}")"
+MAKE_ARGS=(CC="${CC_BIN}" CXX="${CXX_BIN}" LLVM=1 LLVM_IAS=1 O="${O_ARG}")
 make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
 make "${MAKE_ARGS[@]}" -j"${JOBS}" \
   CONFIG_LOCALVERSION_AUTO=n \
