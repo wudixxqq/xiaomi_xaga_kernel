@@ -182,8 +182,11 @@ test -f out/arch/arm64/boot/Image || die "Image not built"
 
 # ------------------------------ verify kernel ------------------------------
 info "Verifying kernel image ..."
-strings out/arch/arm64/boot/Image | grep -m1 'Linux version' | tee "$ARTIFACTS/kernel-banner.txt"
-grep -q "Linux version ${STOCK_KREL}" "$ARTIFACTS/kernel-banner.txt" || die "kernel banner mismatch (vermagic risk)"
+# Match the FULL version string, not just "Linux version": a ThinLTO relink
+# can reorder .rodata so a format string ("Linux version %s (%s)") precedes
+# the real banner and grep -m1 would pick it (CI run 43974154021 lesson).
+strings out/arch/arm64/boot/Image | grep -m1 "Linux version ${STOCK_KREL}" | tee "$ARTIFACTS/kernel-banner.txt"
+[[ -s "$ARTIFACTS/kernel-banner.txt" ]] || die "kernel banner mismatch (vermagic risk)"
 KSU_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'KernelSU' || true)
 SUSFS_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'susfs' || true)
 info "KernelSU strings: $KSU_STR | SUSFS strings: $SUSFS_STR"
