@@ -190,14 +190,33 @@ cd "$WORK/common"
 # ------------------------------ AK3 package --------------------------------
 info "Building AnyKernel3 package ..."
 AK3="$WORK/ak3"; rm -rf "$AK3"; mkdir -p "$AK3"
-# Use the full AnyKernel3 template from THIS repo's checkout (has META-INF/,
-# tools/ak3-core.sh, magiskboot, etc.). kernel_common has no anykernel/.
+# Template strategy:
+#   1) shell (anykernel.sh/install flow) from THIS repo's anykernel/ - the
+#      dump_boot/write_boot flow already proven working on xaga by the user;
+#   2) tools/ + META-INF upgraded from WildKernels/AnyKernel3@gki-2.0 (the
+#      template used by the WildKernels GKI CI project): much newer magiskboot
+#      (2025-11, full boot header v4 support) and busybox 1.36.1-osm0sis.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+info "AK3 template debug: REPO_ROOT=$REPO_ROOT"
+ls -la "$REPO_ROOT/anykernel" 2>&1 | head -6 || true
 if [[ -f "$REPO_ROOT/anykernel/META-INF/com/google/android/update-binary" ]]; then
-  info "Using full AnyKernel3 template from repo anykernel/"
+  info "Using anykernel.sh shell from repo anykernel/"
   cp -rp "$REPO_ROOT/anykernel/." "$AK3/"
 else
   die "repo anykernel/ template missing (need META-INF/com/google/android/update-binary)"
+fi
+# Upgrade tools/ + META-INF from WildKernels gki-2.0 (keep our anykernel.sh)
+if git clone --depth=1 -b gki-2.0 https://github.com/WildKernels/AnyKernel3.git "$WORK/ak3wild" 2>&1 | tail -1; then
+  if [[ -f "$WORK/ak3wild/tools/ak3-core.sh" && -f "$WORK/ak3wild/META-INF/com/google/android/update-binary" ]]; then
+    info "Upgrading AK3 tools/META-INF from WildKernels gki-2.0"
+    rm -rf "$AK3/tools" "$AK3/META-INF"
+    cp -rp "$WORK/ak3wild/tools" "$AK3/tools"
+    cp -rp "$WORK/ak3wild/META-INF" "$AK3/META-INF"
+  else
+    info "WildKernels template incomplete - keeping repo tools/META-INF"
+  fi
+else
+  info "WildKernels clone failed - keeping repo tools/META-INF"
 fi
 # Kernel display name = stock-style release string (matches baked-in banner)
 sed -i "s|^kernel.string=.*|kernel.string=5.10${SCMVERSION_SUFFIX}|" "$AK3/anykernel.sh"
