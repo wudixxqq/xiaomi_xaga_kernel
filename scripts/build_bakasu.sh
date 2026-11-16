@@ -110,6 +110,22 @@ if [[ "$ENABLE_SUSFS" == "1" ]]; then
   info "fs sources with susfs hooks: $HOOKED"
   [[ "$HOOKED" -ge 3 ]] || die "SUSFS hooks not injected into fs/ (incomplete patch)"
   echo "$HOOKED" > "$ARTIFACTS/susfs-hooked-files.txt"
+
+  # --- compat fix: newer susfs4ksu uses VMA_PAD_START(), which this pinned
+  # GKI 5.10 tree (81e7418c) predates. Backport a no-op definition so the
+  # spoofed /proc/<pid>/maps code compiles (modern kernels pad to vm_end).
+  if grep -rq 'VMA_PAD_START' fs/ include/ && ! grep -rq 'define VMA_PAD_START' include/; then
+    info "Backporting VMA_PAD_START compat macro for older 5.10 tree ..."
+    cat >> include/linux/mm.h <<'COMPAT_EOF'
+
+/* compat: susfs4ksu gki-android12-5.10 uses VMA_PAD_START (newer kernels);
+ * this 5.10 tree has no VMA padding, so map it to vm_end. */
+#ifndef VMA_PAD_START
+#define VMA_PAD_START(vma) ((vma)->vm_end)
+#endif
+COMPAT_EOF
+    grep -q 'define VMA_PAD_START' include/linux/mm.h || die "VMA_PAD_START compat injection failed"
+  fi
 else
   cd "$WORK/common"
 fi
