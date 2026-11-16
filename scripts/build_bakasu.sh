@@ -136,10 +136,10 @@ MAKEARGS="O=out ARCH=arm64 CC=clang HOSTCC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE
 make $MAKEARGS gki_defconfig
 # GitHub runner has ~16GB RAM and swapon is not permitted; Full LTO link would
 # be OOM-killed. Switch to ThinLTO (far lower peak memory, same KMI).
-scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
-# BakaSU's SUSFS selinux hide hooks take static function pointers that trip
-# CFI jump-table type checks (undefined selinux_hide_init_setxattr at link).
-# CFI is a hardening option, not needed for KMI/vermagic; disable it.
+# Disable LLVM LTO entirely: Full LTO OOMs the 16GB runner (swapon blocked),
+# and ThinLTO internalizes BakaSU's static selinux_hide_init_setxattr() causing
+# an undefined-symbol link failure. LTO is optional hardening, not part of KMI.
+scripts/config --file out/.config -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE
 scripts/config --file out/.config -d CFI_CLANG
 scripts/config --file out/.config -e KSU
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
@@ -155,7 +155,7 @@ grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_FULL|CFI_CLANG|MODVERSIONS|MODUL
 info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
 
 # ------------------------------ build --------------------------------------
-info "Building kernel Image (ThinLTO + CFI, jobs=$JOBS) ..."
+info "Building kernel Image (no-LTO, jobs=$JOBS) ..."
 export KBUILD_BUILD_USER=build-user KBUILD_BUILD_HOST=build-host KBUILD_BUILD_VERSION=1
 make $MAKEARGS -j"$JOBS" Image 2>&1 | tee "$ARTIFACTS/build.log"
 test -f out/arch/arm64/boot/Image || die "Image not built"
