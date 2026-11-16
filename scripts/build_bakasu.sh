@@ -137,6 +137,10 @@ make $MAKEARGS gki_defconfig
 # GitHub runner has ~16GB RAM and swapon is not permitted; Full LTO link would
 # be OOM-killed. Switch to ThinLTO (far lower peak memory, same KMI).
 scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
+# BakaSU's SUSFS selinux hide hooks take static function pointers that trip
+# CFI jump-table type checks (undefined selinux_hide_init_setxattr at link).
+# CFI is a hardening option, not needed for KMI/vermagic; disable it.
+scripts/config --file out/.config -d CFI_CLANG
 scripts/config --file out/.config -e KSU
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
   scripts/config --file out/.config \
