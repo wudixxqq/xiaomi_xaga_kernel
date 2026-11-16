@@ -12,6 +12,7 @@
 set -euo pipefail
 
 log()  { echo "[build] $*"; }
+warn() { echo "[build] WARNING: $*" >&2; }
 die()  { echo "[build] ERROR: $*" >&2; exit 1; }
 
 # ----------------------------- configuration -------------------------------
@@ -41,6 +42,33 @@ SUKISU_PATCH_REPO="${SUKISU_PATCH_REPO:-https://github.com/SukiSU-Nova/SukiSU_pa
 # Hook patch was renamed upstream: new_hooks.patch -> scope_min_manual_hooks_v1.6.patch
 HOOK_PATCH="${HOOK_PATCH:-scope_min_manual_hooks_v1.6.patch}"
 CLANG_REPO="${CLANG_REPO:-https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r416183b}"
+
+# ---- boot.img repack (direct deliverable) ----------------------------------
+ENABLE_BOOTIMG="${ENABLE_BOOTIMG:-1}"   # 1 = also rebuild a flashable boot.img
+# Stock boot.img source. Accepts a Windows path (forward or back slashes), a
+# POSIX path, or an https URL. Backslashes / Chinese chars are normalized below.
+STOCK_BOOT_IMG="${STOCK_BOOT_IMG:-E:\迅雷云盘\xaga_images_V14.0.6.0.TLOCNXM_20230904.0000.00_13.0_cn_e2a532f260\xaga_images_V14.0.6.0.TLOCNXM_13.0\images\boot.img}"
+STOCK_BOOT_SHA256="${STOCK_BOOT_SHA256:-50d5665a81014a9fbc9e22f58acd1f315cf9302ac761fb52251c29f9f98f1429}"
+BOOT_CHUNKS_DIR="${BOOT_CHUNKS_DIR:-${KERNEL_DIR}/boot-stock}"   # optional boot.img.part-* chunks
+BOOT_OUT_NAME="${BOOT_OUT_NAME:-boot-xaga-KSU-SUSFS.img}"
+MKBOOT_TOOLS_DIR="${MKBOOT_TOOLS_DIR:-${WORK_DIR}/mkboot}"
+
+# Normalize a Windows path to something bash / python can open on MSYS/Git-Bash:
+#   E:\dir\文件\boot.img -> /e/dir/文件/boot.img
+# Leaves POSIX paths and http(s) URLs untouched.
+normalize_path() {
+  local p="$1"
+  case "$p" in
+    http://*|https://*) printf '%s' "$p"; return 0 ;;
+  esac
+  if [[ "$p" =~ ^([A-Za-z]):[\\/](.*)$ ]]; then
+    local drive="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]}"
+    p="/$(echo "$drive" | tr 'A-Z' 'a-z')/${rest//\\//}"
+  else
+    p="${p//\\//}"
+  fi
+  printf '%s' "$p"
+}
 
 cd "${KERNEL_DIR}"
 mkdir -p "${WORK_DIR}" "${ARTIFACT_DIR}"
@@ -174,6 +202,96 @@ fi
 # Disable the defconfig consistency check that conflicts with runtime patches
 sed -i 's/check_defconfig//' "${KERNEL_DIR}/build.config.gki" || true
 
+# ------------------------- boot.img support ---------------------------------
+STOCK_BOOT_PATH="$(normalize_path "${STOCK_BOOT_IMG}")"
+
+fetch_mkboot_tools() {
+  mkdir -p "${MKBOOT_TOOLS_DIR}/gki"
+  rm -f "${MKBOOT_TOOLS_DIR}/gki/__init__.py"
+  local f
+  for f in mkbootimg.py unpack_bootimg.py gki/generate_gki_certificate.py; do
+    local dest="${MKBOOT_TOOLS_DIR}/$f"
+    [[ -s "$dest" ]] && continue
+    curl -sSL --retry 3 "${MKBOOT_BASE_URL:-https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/$f?format=TEXT}" \
+      | base64 -d > "$dest" 2>/dev/null || true
+    grep -qiE "error 404|<html|cannot find" "$dest" 2>/dev/null && { rm -f "$dest"; }
+  done
+  [[ -s "${MKBOOT_TOOLS_DIR}/mkbootimg.py" && -s "${MKBOOT_TOOLS_DIR}/unpack_bootimg.py" ]] \
+    || die "cannot fetch mkbootimg tools"
+}
+
+prepare_stock_boot() {
+  # 1) direct file / URL
+  if [[ "${STOCK_BOOT_PATH}" == http://* || "${STOCK_BOOT_PATH}" == https://* ]]; then
+    [[ -f "${WORK_DIR}/boot-stock.img" ]] || {
+      log "Downloading stock boot.img from ${STOCK_BOOT_PATH} ..."
+      curl -fL --retry 3 "${STOCK_BOOT_PATH}" -o "${WORK_DIR}/boot-stock.img" || die "stock boot download failed"
+    }
+    STOCK_BOOT_PATH="${WORK_DIR}/boot-stock.img"
+  elif [[ -f "${STOCK_BOOT_PATH}" ]]; then
+    log "Using stock boot.img: ${STOCK_BOOT_PATH}"
+  else
+    # 2) reassemble from 16MB chunks (GitHub cannot store a 64MB blob via API)
+    local chunkdir chunks=0 c
+    chunkdir="$(normalize_path "${BOOT_CHUNKS_DIR}")"
+    chunks=$(ls "${chunkdir}"/boot.img.part-* 2>/dev/null | wc -l) || chunks=0
+    if [[ "${chunks}" -gt 0 ]]; then
+      log "Reassembling stock boot.img from ${chunks} chunks in ${chunkdir} ..."
+      cat "${chunkdir}"/boot.img.part-* > "${WORK_DIR}/boot-stock.img"
+      STOCK_BOOT_PATH="${WORK_DIR}/boot-stock.img"
+    else
+      warn "stock boot.img not found at ${STOCK_BOOT_PATH} and no chunks in ${chunkdir}"
+      return 1
+    fi
+  fi
+  if [[ -n "${STOCK_BOOT_SHA256}" ]]; then
+    local actual; actual="$(sha256sum "${STOCK_BOOT_PATH}" | awk '{print $1}')"
+    if [[ "${actual}" != "${STOCK_BOOT_SHA256}" ]]; then
+      warn "stock boot.img sha256 mismatch (got ${actual}, expected ${STOCK_BOOT_SHA256})"
+      warn "continuing anyway - set STOCK_BOOT_SHA256='' to silence"
+    else
+      log "stock boot.img sha256 verified"
+    fi
+  fi
+  return 0
+}
+
+repack_boot_img() {
+  [[ "${ENABLE_BOOTIMG}" == "1" || "${ENABLE_BOOTIMG}" == "true" ]] || return 0
+  prepare_stock_boot || { warn "boot.img repack skipped: no stock boot"; return 0; }
+  fetch_mkboot_tools
+
+  local unpack="${WORK_DIR}/unpacked-boot" ksrc="${ZIMAGE_DIR}/Image.gz"
+  [[ -f "${ksrc}" ]] || { warn "Image.gz missing, cannot repack boot.img"; return 0; }
+  rm -rf "${unpack}"; mkdir -p "${unpack}"
+  log "Unpacking stock boot.img header ..."
+  local out
+  out="$(python3 "${MKBOOT_TOOLS_DIR}/unpack_bootimg.py" --boot_img="${STOCK_BOOT_PATH}" --out="${unpack}" 2>&1)" || die "boot unpack failed"
+  echo "${out}" | head -12
+
+  local hv osv ospl cmdline
+  hv="$(echo "${out}"   | grep -oE 'boot image header version: [0-9]+' | grep -oE '[0-9]+' | head -1)"
+  osv="$(echo "${out}"   | grep -oE 'os version: [0-9.]+'              | grep -oE '[0-9.]+' | head -1)"
+  ospl="$(echo "${out}"  | grep -oE 'os patch level: [0-9-]+'          | grep -oE '[0-9-]+' | head -1)"
+  cmdline="$(echo "${out}" | grep -oE 'command line args:.*' | sed 's/^command line args: *//')"
+  hv="${hv:-4}"; osv="${osv:-12.0.0}"
+  case "${ospl}" in *-*) : ;; ????) ospl="${ospl}-05" ;; *) ospl="2023-07-05" ;; esac
+
+  local -a extra=()
+  [[ -f "${unpack}/dtb" ]]     && extra+=(--dtb "${unpack}/dtb")
+  [[ -f "${unpack}/ramdisk" ]] && extra+=(--ramdisk "${unpack}/ramdisk")
+  [[ -n "${cmdline}" ]]        && extra+=(--cmdline "${cmdline}")
+
+  local boot_out="${ARTIFACT_DIR}/${BOOT_OUT_NAME}"
+  python3 "${MKBOOT_TOOLS_DIR}/mkbootimg.py" \
+    --kernel "${ksrc}" --header_version "${hv}" \
+    --os_version "${osv}" --os_patch_level "${ospl}" \
+    "${extra[@]}" --output "${boot_out}" || die "mkbootimg failed"
+  ( cd "${ARTIFACT_DIR}" && sha256sum "${BOOT_OUT_NAME}" > "${BOOT_OUT_NAME}.sha256" )
+  log "boot.img ready: ${boot_out} ($(du -h "${boot_out}" | cut -f1))"
+  printf '%s\n' "${BOOT_OUT_NAME}" > "${ARTIFACT_DIR}/boot-name.txt"
+}
+
 # ----------------------------- build ---------------------------------------
 log "Building ${DEFCONFIG} with ${JOBS} jobs ..."
 rm -rf "${OUT_DIR}"
@@ -225,7 +343,14 @@ fi
 ( cd "${ARTIFACT_DIR}" && sha256sum "${PKG_NAME}" > "${PKG_NAME}.sha256" )
 printf '%s\n' "${PKG_NAME}" > "${ARTIFACT_DIR}/artifact-name.txt"
 
+# ------------------- direct boot.img deliverable ----------------------------
+repack_boot_img
+
 log "Build complete."
 log "Kernel version : ${KVER}"
-log "Artifact       : ${FINAL_ZIP}"
+log "AK3 artifact   : ${FINAL_ZIP}"
 log "Size           : $(du -h "${FINAL_ZIP}" | cut -f1)"
+if [[ -f "${ARTIFACT_DIR}/${BOOT_OUT_NAME}" ]]; then
+  log "BOOT artifact  : ${ARTIFACT_DIR}/${BOOT_OUT_NAME}"
+  log "BOOT size      : $(du -h "${ARTIFACT_DIR}/${BOOT_OUT_NAME}" | cut -f1)"
+fi

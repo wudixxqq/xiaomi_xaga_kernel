@@ -19,6 +19,10 @@ on:
         description: 'Upload flashable zip as Actions artifact'
         type: boolean
         default: true
+      enable_bootimg:
+        description: 'Also repack and output a flashable boot.img'
+        type: boolean
+        default: true
   push:
     branches: [ mglru ]
     paths:
@@ -79,6 +83,18 @@ jobs:
           path: toolchain/clang
           key: clang-r416183b-xaga-v1
 
+      - name: Prepare stock boot.img (chunks)
+        if: ${{ github.event.inputs.enable_bootimg != 'false' }}
+        run: |
+          mkdir -p boot-stock
+          for i in 00 01 02 03; do
+            curl -fsSL --retry 3 \
+              "https://raw.githubusercontent.com/wudixxqq/xaga-kernel-build/main/boot-stock/boot.img.part-$i.part" \
+              -o "boot-stock/boot.img.part-$i.part"
+          done
+          cat boot-stock/boot.img.part-*.part > boot-stock/boot.img
+          echo "50d5665a81014a9fbc9e22f58acd1f315cf9302ac761fb52251c29f9f98f1429  boot-stock/boot.img" | sha256sum -c -
+
       - name: Build kernel
         run: |
           chmod +x scripts/build_ci.sh
@@ -87,19 +103,34 @@ jobs:
           TOOLCHAIN_DIR: ${{ github.workspace }}/toolchain
           WORK_DIR: ${{ github.workspace }}/.ci
           ARTIFACT_DIR: ${{ github.workspace }}/artifacts
+          BOOT_CHUNKS_DIR: ${{ github.workspace }}/boot-stock
+          STOCK_BOOT_IMG: ${{ github.workspace }}/boot-stock/boot.img
           JOBS: ${{ env.JOBS || 4 }}
 
-      - name: Upload flashable zip
+      - name: Upload flashable zip and boot.img
         if: ${{ always() && (github.event.inputs.upload_artifact == 'true' || github.event_name != 'workflow_dispatch') }}
         uses: actions/upload-artifact@v4
         with:
           name: xaga-kernel-${{ github.run_number }}
           path: |
             artifacts/*.zip
+            artifacts/*.img
             artifacts/*.sha256
+            artifacts/boot-name.txt
             kernel.log
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Upload BOOT image (standalone)
+        if: ${{ always() && hashFiles('artifacts/*.img') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-boot-${{ github.run_number }}
+          path: |
+            artifacts/*.img
+            artifacts/*.img.sha256
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Job summary
         if: ${{ always() }}
@@ -108,5 +139,8 @@ jobs:
           echo "- Status: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- KernelSU/SUSFS: ${{ env.ENABLE_KSU }}" >> "$GITHUB_STEP_SUMMARY"
           if [ -f artifacts/artifact-name.txt ]; then
-            echo "- Artifact: $(cat artifacts/artifact-name.txt)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- AK3 artifact: $(cat artifacts/artifact-name.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts/boot-name.txt ]; then
+            echo "- BOOT image: $(cat artifacts/boot-name.txt)" >> "$GITHUB_STEP_SUMMARY"
           fi
