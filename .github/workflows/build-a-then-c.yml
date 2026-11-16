@@ -1,0 +1,160 @@
+name: Build XAGA Kernel — A then C (ordered)
+
+# Variant A: SukiSU-Nova main @ v3.0.0 (official GKI, KPM, stock kernel name)
+# Variant C: built ON TOP of A's success — Nova builtin @ 4bec532dd4 + kernel SUSFS
+# C has `needs: build_a`, so it only runs if A succeeds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_c:
+        description: 'After A succeeds, also build C (kernel-level SUSFS)'
+        type: boolean
+        default: true
+  push:
+    branches: [ mglru ]
+    paths:
+      - 'scripts/build_variant.sh'
+      - '.github/workflows/build-a-then-c.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xaga-a-then-c
+  cancel-in-progress: false
+
+env:
+  STOCK_KREL: 5.10.136-android12-9-00020-gc9f59ef34367-ab9585114
+
+jobs:
+  build_a:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            device-tree-compiler ccache curl wget git zip unzip p7zip-full \
+            zstd lz4 xz-utils rsync ca-certificates
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-xaga-a-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-xaga-a-${{ runner.os }}-
+
+      - name: Cache Clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang
+          key: clang-r416183b-xaga-v1
+
+      - name: Prepare stock boot.img
+        run: |
+          test -n "$(ls boot-stock/boot.img.part-* 2>/dev/null)" || { echo "missing boot-stock chunks" >&2; exit 1; }
+          cat boot-stock/boot.img.part-*.part > /tmp/stock-boot.img
+          echo "50d5665a81014a9fbc9e22f58acd1f315cf9302ac761fb52251c29f9f98f1429  /tmp/stock-boot.img" | sha256sum -c -
+
+      - name: Build variant A
+        run: |
+          chmod +x scripts/build_variant.sh
+          VARIANT=a STOCK_BOOT_IMG=/tmp/stock-boot.img \
+            TOOLCHAIN_DIR=$GITHUB_WORKSPACE/toolchain WORK_DIR=$GITHUB_WORKSPACE/.ci-a \
+            ARTIFACT_DIR=$GITHUB_WORKSPACE/artifacts-a OUT_DIR=$GITHUB_WORKSPACE/out-a \
+            JOBS=4 bash scripts/build_variant.sh
+
+      - name: Upload A artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-A-nova-v3.0.0-${{ github.run_number }}
+          path: |
+            artifacts-a/*.img
+            artifacts-a/*.zip
+            artifacts-a/*.sha256
+            artifacts-a/build-a-identity.txt
+            kernel-a.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  build_c:
+    needs: build_a
+    if: ${{ success() && (github.event.inputs.build_c != 'false') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            device-tree-compiler ccache curl wget git zip unzip p7zip-full \
+            zstd lz4 xz-utils rsync ca-certificates
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-xaga-c-${{ runner.os }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-xaga-a-${{ runner.os }}-
+            ccache-xaga-c-${{ runner.os }}-
+
+      - name: Cache Clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang
+          key: clang-r416183b-xaga-v1
+
+      - name: Prepare stock boot.img
+        run: |
+          cat boot-stock/boot.img.part-*.part > /tmp/stock-boot.img
+          echo "50d5665a81014a9fbc9e22f58acd1f315cf9302ac761fb52251c29f9f98f1429  /tmp/stock-boot.img" | sha256sum -c -
+
+      - name: Build variant C (kernel-level SUSFS)
+        run: |
+          chmod +x scripts/build_variant.sh
+          VARIANT=c STOCK_BOOT_IMG=/tmp/stock-boot.img \
+            TOOLCHAIN_DIR=$GITHUB_WORKSPACE/toolchain WORK_DIR=$GITHUB_WORKSPACE/.ci-c \
+            ARTIFACT_DIR=$GITHUB_WORKSPACE/artifacts-c OUT_DIR=$GITHUB_WORKSPACE/out-c \
+            JOBS=4 bash scripts/build_variant.sh
+
+      - name: Upload C artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-C-nova-builtin-susfs-${{ github.run_number }}
+          path: |
+            artifacts-c/*.img
+            artifacts-c/*.zip
+            artifacts-c/*.sha256
+            artifacts-c/build-c-identity.txt
+            kernel-c.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Verify SUSFS symbols in C kernel
+        run: |
+          python3 - <<'PY'
+          import zlib, sys
+          data = open('artifacts-c/boot-xaga-nova-c.img','rb').read()
+          i = data.find(b'\x1f\x8b\x08')
+          k = zlib.decompress(data[i:], 16+zlib.MAX_WBITS).lower()
+          markers = [b'ksu_susfs', b'sus_path', b'sus_mount', b'spoof_uname', b'susfs_version']
+          hits = {m.decode(): k.count(m) for m in markers}
+          print('SUSFS symbol hits in C kernel:', hits)
+          if sum(hits.values()) < 5:
+            print('ERROR: kernel-level SUSFS symbols missing!', file=sys.stderr)
+            sys.exit(1)
+          print('OK: kernel-level SUSFS is really present.')
+          PY
