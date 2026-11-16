@@ -197,6 +197,8 @@ if [[ -f "$REPO_ROOT/anykernel/META-INF/com/google/android/update-binary" ]]; th
 else
   die "repo anykernel/ template missing (need META-INF/com/google/android/update-binary)"
 fi
+# Kernel display name = stock-style release string (matches baked-in banner)
+sed -i "s|^kernel.string=.*|kernel.string=5.10${SCMVERSION_SUFFIX}|" "$AK3/anykernel.sh"
 # gzip the kernel for AK3 (AK3 handles decompression via magiskboot/ak3-core)
 gzip -c out/arch/arm64/boot/Image > "$AK3/Image.gz" 2>/dev/null || \
   cp out/arch/arm64/boot/Image "$AK3/Image"
@@ -236,7 +238,7 @@ Flash notes:
   - Known limits: Full LTO/CFI disabled for 16GB CI runner (no runtime impact);
     VMA_PAD_START backported as vm_end for the older 5.10 tree.
 EOF2
-cat > "$AK3/flash-fastboot.sh" <<'FLASHEOF'
+cat > "$ARTIFACTS/flash-fastboot.sh" <<'FLASHEOF'
 #!/system/bin/sh
 # Optional helper: flash this package's boot.img from fastboot on a connected device.
 # Usage: sh flash-fastboot.sh [boot|boot_a|boot_b]   (default: boot)
@@ -246,12 +248,34 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 fastboot flash "$PART" "$DIR/boot.img"
 echo "Flashed boot.img to $PART; reboot with: fastboot reboot"
 FLASHEOF
-chmod +x "$AK3/flash-fastboot.sh"
+chmod +x "$ARTIFACTS/flash-fastboot.sh"
 cd "$AK3"
 ZIP="$ARTIFACTS/AnyKernel3-BakaSU-SUSFS-xaga.zip"
-if command -v 7za >/dev/null 2>&1; then 7za a -mx9 "$ZIP" * >/dev/null
-elif command -v 7z >/dev/null 2>&1; then 7z a -mx9 "$ZIP" * >/dev/null
-else zip -r9 "$ZIP" .; fi
+rm -f "$ZIP"
+# Pack with python3 so Unix permission bits are correct on ANY host
+# (Windows 'zip'/'7z' stores 0666/fat -> recovery cannot exec tools/busybox
+#  & tools/magiskboot -> AK3 install aborts with "flash failed").
+python3 - "$ZIP" <<'PYEOF'
+import os, sys, zipfile
+zip_path = sys.argv[1]
+def mode_for(name):
+    if name in ("META-INF/com/google/android/update-binary", "anykernel.sh") \
+       or name.startswith("tools/") or name.endswith(".sh"):
+        return 0o755
+    return 0o644
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for root, dirs, files in os.walk("."):
+        dirs.sort()
+        for f in sorted(files):
+            p = os.path.join(root, f)
+            name = os.path.relpath(p, ".").replace("\\", "/")
+            zi = zipfile.ZipInfo(name, date_time=__import__("time").gmtime()[:6])
+            zi.external_attr = (mode_for(name) << 16) | (0o10 << 28)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            with open(p, "rb") as fh:
+                z.writestr(zi, fh.read())
+print("AK3 zip packed with correct unix perms")
+PYEOF
 cd "$WORK/common"
 
 # ------------------------------ checksums ----------------------------------
