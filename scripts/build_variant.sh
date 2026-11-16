@@ -128,6 +128,11 @@ log "Setting kernel release name to stock: ${STOCK_KREL}"
 KMAKEFILE="${KERNEL_DIR}/Makefile"
 # Substitute SUBLEVEL so uname -r base becomes 5.10.136 (matching stock).
 sed -i -E "s/^SUBLEVEL[[:space:]]*=.*/SUBLEVEL = 136/" "${KMAKEFILE}"
+# Prevent scripts/setlocalversion from appending "-g<sha>-dirty" (would exceed
+# the 64-char utsrelease limit with our long stock LOCALVERSION). An empty
+# .scmversion makes setlocalversion emit nothing and skip the SCM suffix.
+: > "${KERNEL_DIR}/.scmversion"
+log "Created empty .scmversion to keep exact stock kernel release name"
 
 DEFCONFIG_FILE="${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
 [[ -f "${DEFCONFIG_FILE}" ]] || die "defconfig not found"
