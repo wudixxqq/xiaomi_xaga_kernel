@@ -1,0 +1,112 @@
+name: Build XAGA Kernel (GKI 5.10 + KernelSU/SUSFS)
+
+# Triggers:
+#   - manual (workflow_dispatch) with options
+#   - push to mglru branch when kernel-related files change
+#   - pull_request targeting mglru
+on:
+  workflow_dispatch:
+    inputs:
+      enable_ksu:
+        description: 'Integrate SukiSU-Ultra (KernelSU) + SUSFS + hide patches'
+        type: boolean
+        default: true
+      strict_patch:
+        description: 'Abort build if any patch fails'
+        type: boolean
+        default: true
+      upload_artifact:
+        description: 'Upload flashable zip as Actions artifact'
+        type: boolean
+        default: true
+  push:
+    branches: [ mglru ]
+    paths:
+      - 'Makefile'
+      - 'arch/**'
+      - 'fs/**'
+      - 'include/**'
+      - 'mm/**'
+      - 'kernel/**'
+      - 'drivers/**'
+      - 'scripts/build_ci.sh'
+      - '.github/workflows/build-kernel.yml'
+  pull_request:
+    branches: [ mglru ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xaga-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ENABLE_KSU: ${{ github.event.inputs.enable_ksu || 'true' }}
+  STRICT_PATCH: ${{ github.event.inputs.strict_patch || 'true' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential flex libssl-dev libelf-dev \
+            device-tree-compiler ccache curl wget git zip unzip p7zip-full \
+            zstd lz4 xz-utils rsync ca-certificates
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-xaga-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-xaga-${{ runner.os }}-
+
+      - name: Cache Clang toolchain
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang
+          key: clang-r416183b-xaga-v1
+
+      - name: Build kernel
+        run: |
+          chmod +x scripts/build_ci.sh
+          bash scripts/build_ci.sh
+        env:
+          TOOLCHAIN_DIR: ${{ github.workspace }}/toolchain
+          WORK_DIR: ${{ github.workspace }}/.ci
+          ARTIFACT_DIR: ${{ github.workspace }}/artifacts
+          JOBS: ${{ env.JOBS || 4 }}
+
+      - name: Upload flashable zip
+        if: ${{ always() && (github.event.inputs.upload_artifact == 'true' || github.event_name != 'workflow_dispatch') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-kernel-${{ github.run_number }}
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            kernel.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Job summary
+        if: ${{ always() }}
+        run: |
+          echo "### XAGA kernel build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Status: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- KernelSU/SUSFS: ${{ env.ENABLE_KSU }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/artifact-name.txt ]; then
+            echo "- Artifact: $(cat artifacts/artifact-name.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
