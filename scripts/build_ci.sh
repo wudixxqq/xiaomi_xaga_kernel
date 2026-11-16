@@ -31,11 +31,15 @@ ENABLE_KSU="${ENABLE_KSU:-1}"        # SukiSU-Ultra (KernelSU) + SUSFS + SukiSU_
 ENABLE_CCACHE="${ENABLE_CCACHE:-1}"
 STRICT_PATCH="${STRICT_PATCH:-1}"    # 1 = abort on patch failure; 0 = log & continue
 
-KSU_SETUP_URL="${KSU_SETUP_URL:-https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh}"
-KSU_BRANCH="${KSU_BRANCH:-susfs-main}"
-SUSFS_REPO="${SUSFS_REPO:-https://github.com/shirkneko/susfs4ksu.git}"
+# NOTE (2026-11): upstream renamed/moved - ShirkNeko/SukiSU-Ultra -> SukiSU-Nova/SukiSU-Nova,
+# shirkneko/susfs4ksu was deleted, ShirkNeko/SukiSU_patch -> SukiSU-Nova/SukiSU_patch.
+KSU_SETUP_URL="${KSU_SETUP_URL:-https://raw.githubusercontent.com/SukiSU-Nova/SukiSU-Nova/main/kernel/setup.sh}"
+KSU_REF="${KSU_REF:-}"                 # empty = latest tag; or a tag/commit like v3.0.0
+SUSFS_REPO="${SUSFS_REPO:-https://github.com/hopez13/Susfs-Mirror.git}"
 SUSFS_BRANCH="${SUSFS_BRANCH:-gki-android12-5.10}"
-SUKISU_PATCH_REPO="${SUKISU_PATCH_REPO:-https://github.com/ShirkNeko/SukiSU_patch.git}"
+SUKISU_PATCH_REPO="${SUKISU_PATCH_REPO:-https://github.com/SukiSU-Nova/SukiSU_patch.git}"
+# Hook patch was renamed upstream: new_hooks.patch -> scope_min_manual_hooks_v1.6.patch
+HOOK_PATCH="${HOOK_PATCH:-scope_min_manual_hooks_v1.6.patch}"
 CLANG_REPO="${CLANG_REPO:-https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r416183b}"
 
 cd "${KERNEL_DIR}"
@@ -84,17 +88,26 @@ apply_patch() {
 }
 
 if [[ "${ENABLE_KSU}" == "1" || "${ENABLE_KSU}" == "true" ]]; then
-  log "Setting up SukiSU-Ultra (${KSU_BRANCH}) ..."
+  log "Setting up SukiSU-Nova (KernelSU) ..."
   rm -rf "${KERNEL_DIR}/KernelSU"
-  curl -LSs "${KSU_SETUP_URL}" | bash -s "${KSU_BRANCH}"
+  # Download setup.sh to a file first so an HTTP error is never piped into bash
+  # (the old `curl | bash -s susfs-main` silently executed a 404 body and exited 127).
+  SETUP_SH="${WORK_DIR}/sukisu_setup.sh"
+  curl -fLSs "${KSU_SETUP_URL}" -o "${SETUP_SH}" || die "failed to download setup.sh from ${KSU_SETUP_URL}"
+  grep -q 'setup_kernelsu' "${SETUP_SH}" || die "setup.sh looks invalid (not a SukiSU setup script)"
+  if [[ -n "${KSU_REF}" ]]; then
+    bash "${SETUP_SH}" "${KSU_REF}"
+  else
+    bash "${SETUP_SH}"          # no args -> checks out latest stable tag
+  fi
   [[ -d "${KERNEL_DIR}/KernelSU" ]] || die "KernelSU setup failed"
 
-  KSU_VERSION=$(( $(git -C "${KERNEL_DIR}/KernelSU" rev-list --count main) + 10606 ))
+  KSU_VERSION=$(( $(git -C "${KERNEL_DIR}/KernelSU" rev-list --count HEAD) + 10606 ))
   log "KSU_VERSION=${KSU_VERSION}"
   sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" \
-    "${KERNEL_DIR}/KernelSU/kernel/Makefile"
+    "${KERNEL_DIR}/KernelSU/kernel/Makefile" || log "WARNING: DKSU_VERSION pattern not found"
 
-  log "Fetching susfs4ksu (${SUSFS_BRANCH}) and SukiSU_patch ..."
+  log "Fetching SUSFS mirror (${SUSFS_BRANCH}) and SukiSU_patch ..."
   if [[ ! -d "${WORK_DIR}/susfs4ksu/.git" ]]; then
     git clone --depth=1 -b "${SUSFS_BRANCH}" "${SUSFS_REPO}" "${WORK_DIR}/susfs4ksu"
   fi
@@ -103,8 +116,9 @@ if [[ "${ENABLE_KSU}" == "1" || "${ENABLE_KSU}" == "true" ]]; then
   fi
 
   log "Applying SUSFS / hook patches ..."
-  cp -f "${WORK_DIR}/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch" "${KERNEL_DIR}/"
-  cp -f "${WORK_DIR}/SukiSU_patch/hooks/new_hooks.patch" "${KERNEL_DIR}/"
+  SUSFS_PATCH="${WORK_DIR}/susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+  [[ -f "${SUSFS_PATCH}" ]] || die "SUSFS patch not found: ${SUSFS_PATCH}"
+  cp -f "${SUSFS_PATCH}" "${KERNEL_DIR}/"
   cp -rf "${WORK_DIR}"/susfs4ksu/kernel_patches/fs/* "${KERNEL_DIR}/fs/"
   cp -rf "${WORK_DIR}"/susfs4ksu/kernel_patches/include/linux/* "${KERNEL_DIR}/include/linux/"
 
@@ -112,7 +126,15 @@ if [[ "${ENABLE_KSU}" == "1" || "${ENABLE_KSU}" == "true" ]]; then
 
   cp -f "${WORK_DIR}/SukiSU_patch/69_hide_stuff.patch" "${KERNEL_DIR}/"
   apply_patch "${KERNEL_DIR}/69_hide_stuff.patch" -p1 3
-  apply_patch "${KERNEL_DIR}/new_hooks.patch" -p1
+
+  # Hook patch: prefer configured name, fall back to the legacy new_hooks.patch
+  HOOK_SRC="${WORK_DIR}/SukiSU_patch/hooks/${HOOK_PATCH}"
+  if [[ ! -f "${HOOK_SRC}" ]]; then
+    HOOK_SRC="${WORK_DIR}/SukiSU_patch/hooks/new_hooks.patch"
+  fi
+  [[ -f "${HOOK_SRC}" ]] || die "no hook patch found in SukiSU_patch/hooks/"
+  cp -f "${HOOK_SRC}" "${KERNEL_DIR}/hooks.patch"
+  apply_patch "${KERNEL_DIR}/hooks.patch" -p1
 
   log "Injecting CONFIG_KSU_* options into ${DEFCONFIG} ..."
   DEFCONFIG_FILE="${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
