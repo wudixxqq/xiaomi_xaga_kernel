@@ -21,8 +21,14 @@ warn() { printf '[bakasu] WARN: %s\n' "$*" >&2; }
 die()  { printf '[bakasu] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ------------------------------ config -------------------------------------
-WORK="${WORK:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.bakasu-work}"
-ARTIFACTS="${ARTIFACTS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/artifacts-bakasu}"
+# Resolve ALL repo-relative paths BEFORE any cd: the workflow invokes this
+# script with a RELATIVE path, and later `cd $WORK/common` (kernel tree has
+# its own scripts/) would silently re-resolve BASH_SOURCE into the kernel
+# tree (CI run 43968518157 failure). Pin the repo root here, once.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORK="${WORK:-$REPO_ROOT/.bakasu-work}"
+ARTIFACTS="${ARTIFACTS:-$REPO_ROOT/artifacts-bakasu}"
 JOBS="${JOBS:-$(nproc --all)}"
 
 KERNEL_REPO="${KERNEL_REPO:-aosp-mirror/kernel_common}"
@@ -43,7 +49,7 @@ MAGISK_URL="${MAGISK_URL:-https://github.com/topjohnwu/Magisk/releases/download/
 STOCK_KREL="${STOCK_KREL:-5.10.136-android12-9-00020-gc9f59ef34367-ab9585114}"
 SCMVERSION_SUFFIX="${SCMVERSION_SUFFIX:--android12-9-00020-gc9f59ef34367-ab9585114}"
 STOCK_BOOT_SHA="${STOCK_BOOT_SHA:-8a818f319380a7bb2e432f8cf6eed2aaa0a7d5c1ac57cc2bbcf191b557b58faf}"
-STOCK_CHUNKS_DIR="${STOCK_CHUNKS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/boot-bakasu}"
+STOCK_CHUNKS_DIR="${STOCK_CHUNKS_DIR:-$REPO_ROOT/boot-bakasu}"
 
 ENABLE_SUSFS="${ENABLE_SUSFS:-1}"
 
@@ -196,8 +202,7 @@ AK3="$WORK/ak3"; rm -rf "$AK3"; mkdir -p "$AK3"
 #   2) tools/ + META-INF upgraded from WildKernels/AnyKernel3@gki-2.0 (the
 #      template used by the WildKernels GKI CI project): much newer magiskboot
 #      (2025-11, full boot header v4 support) and busybox 1.36.1-osm0sis.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-info "AK3 template debug: REPO_ROOT=$REPO_ROOT"
+info "AK3 template: REPO_ROOT=$REPO_ROOT"
 ls -la "$REPO_ROOT/anykernel" 2>&1 | head -6 || true
 if [[ -f "$REPO_ROOT/anykernel/META-INF/com/google/android/update-binary" ]]; then
   info "Using anykernel.sh shell from repo anykernel/"
