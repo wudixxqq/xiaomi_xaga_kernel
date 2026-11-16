@@ -134,6 +134,9 @@ fi
 info "Configuring kernel (gki_defconfig + BakaSU + SUSFS) ..."
 MAKEARGS="O=out ARCH=arm64 CC=clang HOSTCC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=$CROSS_COMPILE"
 make $MAKEARGS gki_defconfig
+# GitHub runner has ~16GB RAM and swapon is not permitted; Full LTO link would
+# be OOM-killed. Switch to ThinLTO (far lower peak memory, same KMI).
+scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
 scripts/config --file out/.config -e KSU
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
   scripts/config --file out/.config \
@@ -148,12 +151,7 @@ grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_FULL|CFI_CLANG|MODVERSIONS|MODUL
 info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
 
 # ------------------------------ build --------------------------------------
-info "Building kernel Image (LTO full + CFI, jobs=$JOBS) ..."
-if [[ $(free -g | awk '/^Swap:/{print $2}') -lt 8 ]]; then
-  SWAP="${WORK}/swapfile-bakasu"
-  fallocate -l 16G "$SWAP" 2>/dev/null || dd if=/dev/zero of="$SWAP" bs=1M count=16384 status=none
-  chmod 600 "$SWAP"; mkswap "$SWAP" >/dev/null && swapon "$SWAP" || warn "swapon failed"
-fi
+info "Building kernel Image (ThinLTO + CFI, jobs=$JOBS) ..."
 export KBUILD_BUILD_USER=build-user KBUILD_BUILD_HOST=build-host KBUILD_BUILD_VERSION=1
 make $MAKEARGS -j"$JOBS" Image 2>&1 | tee "$ARTIFACTS/build.log"
 test -f out/arch/arm64/boot/Image || die "Image not built"
