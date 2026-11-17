@@ -135,6 +135,81 @@ if [[ "$ENABLE_SUSFS" == "1" ]]; then
 COMPAT_EOF
     grep -q 'define VMA_PAD_START' include/linux/mm.h || die "VMA_PAD_START compat injection failed"
   fi
+
+  # --- Kconfig symbol injection ---
+  # Nova's KernelSU/kernel/Kconfig does NOT define the KSU_SUSFS* symbols (Nova
+  # handles susfs via its own userspace extension). But the kernel-side patch
+  # needs them: fs/Makefile gains `obj-$(CONFIG_KSU_SUSFS) += susfs.o` and all
+  # hooks are #ifdef'd on CONFIG_KSU_SUSFS*. Without a Kconfig definition,
+  # `scripts/config -e KSU_SUSFS` lines are silently dropped by olddefconfig
+  # and susfs.o never compiles (CI run 43984049772: SUSFS strings = 2, FAIL).
+  for KCFG in KernelSU/kernel/Kconfig drivers/kernelsu/Kconfig; do
+    if [[ -f "$KCFG" ]]; then
+      if ! grep -q '^config KSU_SUSFS$' "$KCFG"; then
+        cat >> "$KCFG" <<'SUSFS_KCFG'
+
+config KSU_SUSFS
+	bool "SUSFS kernel-side support (susfs4ksu patch)"
+	depends on KSU
+	default y
+
+config KSU_SUSFS_SUS_PATH
+	bool "SUSFS: sus_path (hide paths)"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_MOUNT
+	bool "SUSFS: sus_mount (hide mounts)"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_KSTAT
+	bool "SUSFS: sus_kstat (spoof stat)"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_UNAME
+	bool "SUSFS: spoof_uname (spoof uname)"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_ENABLE_LOG
+	bool "SUSFS: enable logging"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "SUSFS: hide ksu/susfs symbols from kallsyms"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	bool "SUSFS: spoof cmdline/bootconfig"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_OPEN_REDIRECT
+	bool "SUSFS: open_redirect"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_MAP
+	bool "SUSFS: sus_map (hide maps)"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_PRIORITY_UID_FILTER
+	bool "SUSFS: priority uid filter (optional, off by default)"
+	depends on KSU_SUSFS
+	default n
+SUSFS_KCFG
+        info "Injected KSU_SUSFS Kconfig symbols into $KCFG"
+      fi
+      break
+    fi
+  done
+  grep -q '^config KSU_SUSFS$' KernelSU/kernel/Kconfig drivers/kernelsu/Kconfig 2>/dev/null \
+    || die "no Kconfig found to host KSU_SUSFS symbols"
 else
   cd "$WORK/common"
 fi
@@ -171,6 +246,9 @@ make $MAKEARGS olddefconfig
 # shipping a kernel that bootloops on device (CI run 43970952769 lesson).
 grep -q '^CONFIG_LTO_CLANG_THIN=y' out/.config || die "LTO_CLANG_THIN not set (CFI would be dropped, vendor CRC mismatch)"
 grep -q '^CONFIG_CFI_CLANG=y' out/.config || die "CFI_CLANG not set (vendor module module_layout CRC will mismatch)"
+if [[ "$ENABLE_SUSFS" == "1" ]]; then
+  grep -q '^CONFIG_KSU_SUSFS=y' out/.config || die "KSU_SUSFS dropped by olddefconfig (Kconfig symbol missing; susfs.o would never compile)"
+fi
 info "--- key config ---"
 grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_THIN|LTO_NONE|CFI_CLANG|MODVERSIONS|MODULE_SCMVERSION|LOCALVERSION|KPROBES)=|^# CONFIG_LOCALVERSION_AUTO' out/.config | tee "$ARTIFACTS/kernel.config.txt"
 info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
@@ -285,7 +363,7 @@ SUSFS userspace (you must install - kernel patch alone does nothing visible):
      Official APK: https://github.com/SukiSU-Nova/SukiSU-Nova/releases
   2) In manager: grant root, open the SUSFS page, install/enable the SUSFS module and
      the ksu_susfs tool (manager pushes it to /data/adb/ksu/bin/).
-  3) Confirm: root shell -> `ksu_susfs version` returns a version; manager SUSFS page
+  3) Confirm: root shell -> ksu_susfs version returns a version; manager SUSFS page
      shows features as supported.
 
 Flash notes:
