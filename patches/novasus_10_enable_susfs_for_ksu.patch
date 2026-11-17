@@ -1,40 +1,5 @@
-diff -ruN SukiSU-Nova-main/kernel/Kbuild nova_patched/kernel/Kbuild
---- SukiSU-Nova-main/kernel/Kbuild	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/Kbuild	2026-11-17 08:27:47.787068000 +0800
-@@ -6,21 +6,7 @@
- kernelsu-objs += feature/sulog.o
- kernelsu-objs += feature/sucompat.o
- 
--kernelsu-objs += hook/lsm_hook.o
- kernelsu-objs += hook/setuid_hook.o
--kernelsu-objs += hook/syscall_event_bridge.o
--kernelsu-objs += hook/syscall_hook_manager.o
--kernelsu-objs += hook/tp_marker.o
--ifeq ($(CONFIG_ARM64),y)
--kernelsu-objs += hook/arm64/patch_memory.o
--kernelsu-objs += hook/arm64/syscall_hook.o
--else ifeq ($(CONFIG_X86_64),y)
--kernelsu-objs += hook/x86_64/patch_memory.o
--kernelsu-objs += hook/x86_64/syscall_hook.o
--else ifeq ($(CONFIG_RISCV),y)
--kernelsu-objs += hook/riscv64/patch_memory.o
--kernelsu-objs += hook/riscv64/syscall_hook.o
--endif
- 
- kernelsu-objs += infra/file_wrapper.o
- kernelsu-objs += infra/event_queue.o
-@@ -83,9 +69,6 @@
- ifeq ($(CONFIG_KSU_DEBUG),y)
- ccflags-y += -DCONFIG_KSU_DEBUG=1
- endif
--ifeq ($(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER),y)
--ccflags-y += -DCONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER=1
--endif
- endif
- 
- ifeq ($(CONFIG_KPM),y)
-diff -ruN SukiSU-Nova-main/kernel/Kconfig nova_patched/kernel/Kconfig
---- SukiSU-Nova-main/kernel/Kconfig	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/Kconfig nova_patched/kernel/Kconfig
+--- SukiSU-Nova-c60f21b9e00e/kernel/Kconfig	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/Kconfig	2026-11-17 08:27:47.795068400 +0800
 @@ -2,7 +2,6 @@
  
@@ -157,43 +122,18 @@ diff -ruN SukiSU-Nova-main/kernel/Kconfig nova_patched/kernel/Kconfig
 +endmenu
  
  endmenu
-diff -ruN SukiSU-Nova-main/kernel/core/init.c nova_patched/kernel/core/init.c
---- SukiSU-Nova-main/kernel/core/init.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/core/init.c	2026-11-17 08:37:31.663997900 +0800
-@@ -6,6 +6,7 @@
- #include <linux/sched.h>
- #include <linux/workqueue.h>
- #include <linux/moduleparam.h>
-+#include <linux/susfs.h>
- 
- #include "policy/allowlist.h"
- #include "policy/app_profile.h"
-@@ -13,8 +14,6 @@
- #include "klog.h" // IWYU pragma: keep
- #include "manager/manager_observer.h"
- #include "manager/throne_tracker.h"
--#include "hook/syscall_hook_manager.h"
--#include "hook/lsm_hook.h"
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/core/init.c nova_patched/kernel/core/init.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/core/init.c	2026-11-16 01:07:05.000000000 +0800
++++ nova_patched/kernel/core/init.c	2026-11-17 09:08:50.234264700 +0800
+@@ -17,6 +17,7 @@
+ #include "hook/lsm_hook.h"
  #include "runtime/ksud.h"
  #include "runtime/ksud_boot.h"
++#include <linux/susfs.h>
  #include "feature/sulog.h"
-@@ -77,7 +76,6 @@
- #endif
- 
- struct cred *ksu_cred;
--bool ksu_late_loaded;
- 
- #ifdef CONFIG_KSU_DEBUG
- bool allow_shell = true;
-@@ -136,6 +134,7 @@
-     pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
-     pr_alert("*************************************************************");
- #endif
-+
-     if (allow_shell) {
-         pr_alert("shell is allowed at init!");
-     }
-@@ -163,6 +162,10 @@
+ #include "supercall/supercall.h"
+ #include "ksu.h"
+@@ -163,6 +164,11 @@
      ksu_syscall_hook_init();
  
      ksu_feature_init();
@@ -201,11 +141,12 @@ diff -ruN SukiSU-Nova-main/kernel/core/init.c nova_patched/kernel/core/init.c
 +#ifdef CONFIG_KSU_SUSFS
 +    susfs_init();
 +#endif
++
      ksu_sulog_init();
      ksu_adb_root_init();
      ksu_lsm_hook_init();
-diff -ruN SukiSU-Nova-main/kernel/feature/adb_root.c nova_patched/kernel/feature/adb_root.c
---- SukiSU-Nova-main/kernel/feature/adb_root.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/adb_root.c nova_patched/kernel/feature/adb_root.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/adb_root.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/adb_root.c	2026-11-17 08:27:47.839070300 +0800
 @@ -9,9 +9,12 @@
  #include <linux/ptrace.h>
@@ -354,8 +295,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/adb_root.c nova_patched/kernel/feature
      }
      return 0;
  }
-diff -ruN SukiSU-Nova-main/kernel/feature/adb_root.h nova_patched/kernel/feature/adb_root.h
---- SukiSU-Nova-main/kernel/feature/adb_root.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/adb_root.h nova_patched/kernel/feature/adb_root.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/adb_root.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/adb_root.h	2026-11-17 08:27:47.851067200 +0800
 @@ -2,8 +2,7 @@
  #define __KSU_H_ADB_ROOT
@@ -367,8 +308,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/adb_root.h nova_patched/kernel/feature
  
  void ksu_adb_root_init(void);
  
-diff -ruN SukiSU-Nova-main/kernel/feature/kernel_umount.c nova_patched/kernel/feature/kernel_umount.c
---- SukiSU-Nova-main/kernel/feature/kernel_umount.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/kernel_umount.c nova_patched/kernel/feature/kernel_umount.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/kernel_umount.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/kernel_umount.c	2026-11-17 08:27:47.859067200 +0800
 @@ -83,30 +83,6 @@
          return 0;
@@ -401,8 +342,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/kernel_umount.c nova_patched/kernel/fe
      // umount the target mnt
      pr_info("handle umount for uid: %d, pid: %d\n", new_uid, current->pid);
  
-diff -ruN SukiSU-Nova-main/kernel/feature/selinux_hide.c nova_patched/kernel/feature/selinux_hide.c
---- SukiSU-Nova-main/kernel/feature/selinux_hide.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/kernel/feature/selinux_hide.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/selinux_hide.c	2026-11-17 08:27:47.875065900 +0800
 @@ -1,7 +1,4 @@
  #include "selinux_hide.h"
@@ -1943,8 +1884,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/selinux_hide.c nova_patched/kernel/fea
 -}
 +}
 \ No newline at end of file
-diff -ruN SukiSU-Nova-main/kernel/feature/sucompat.c nova_patched/kernel/feature/sucompat.c
---- SukiSU-Nova-main/kernel/feature/sucompat.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel/feature/sucompat.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/sucompat.c	2026-11-17 08:27:47.886705900 +0800
 @@ -1,6 +1,3 @@
 -#include "linux/file.h"
@@ -2371,8 +2312,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/sucompat.c nova_patched/kernel/feature
  }
  
  void __exit ksu_sucompat_exit()
-diff -ruN SukiSU-Nova-main/kernel/feature/sucompat.h nova_patched/kernel/feature/sucompat.h
---- SukiSU-Nova-main/kernel/feature/sucompat.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.h nova_patched/kernel/feature/sucompat.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/feature/sucompat.h	2026-11-17 08:27:47.894707400 +0800
 @@ -3,15 +3,15 @@
  #include <asm/ptrace.h>
@@ -2398,8 +2339,8 @@ diff -ruN SukiSU-Nova-main/kernel/feature/sucompat.h nova_patched/kernel/feature
 -#endif
 +#endif
 \ No newline at end of file
-diff -ruN SukiSU-Nova-main/kernel/hook/setuid_hook.c nova_patched/kernel/hook/setuid_hook.c
---- SukiSU-Nova-main/kernel/hook/setuid_hook.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel/hook/setuid_hook.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/hook/setuid_hook.c	2026-11-17 08:38:39.512716800 +0800
 @@ -11,6 +11,8 @@
  #include <linux/types.h>
@@ -2561,8 +2502,8 @@ diff -ruN SukiSU-Nova-main/kernel/hook/setuid_hook.c nova_patched/kernel/hook/se
  
      return 0;
  }
-diff -ruN SukiSU-Nova-main/kernel/hook/setuid_hook.h nova_patched/kernel/hook/setuid_hook.h
---- SukiSU-Nova-main/kernel/hook/setuid_hook.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.h nova_patched/kernel/hook/setuid_hook.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/hook/setuid_hook.h	2026-11-17 08:39:55.504162600 +0800
 @@ -7,7 +7,7 @@
  void ksu_setuid_hook_init(void);
@@ -2574,37 +2515,151 @@ diff -ruN SukiSU-Nova-main/kernel/hook/setuid_hook.h nova_patched/kernel/hook/se
 +int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
  
  #endif
-diff -ruN SukiSU-Nova-main/kernel/hook/syscall_event_bridge.c nova_patched/kernel/hook/syscall_event_bridge.c
---- SukiSU-Nova-main/kernel/hook/syscall_event_bridge.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/hook/syscall_event_bridge.c	2026-11-17 08:39:55.506160800 +0800
-@@ -138,6 +138,9 @@
-     if (ret < 0)
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/syscall_event_bridge.c nova_patched/kernel/hook/syscall_event_bridge.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/hook/syscall_event_bridge.c	2026-11-16 01:07:05.000000000 +0800
++++ nova_patched/kernel/hook/syscall_event_bridge.c	2026-11-17 09:49:01.159741800 +0800
+@@ -1,3 +1,4 @@
++// SPDX-License-Identifier: GPL-2.0
+ #include "linux/compiler.h"
+ #include "linux/cred.h"
+ #include "linux/jump_label.h"
+@@ -6,6 +7,7 @@
+ #include <asm/syscall.h>
+ #include <linux/fcntl.h>
+ #include <linux/ptrace.h>
++#include <linux/sched.h>
+ #include <linux/static_key.h>
+ 
+ #include "arch.h"
+@@ -21,6 +23,21 @@
+ #include "feature/adb_root.h"
+ #include "preinit/preinit.h"
+ 
++/*
++ * SUSFS port note:
++ * With the kernel-side SUSFS patch applied, fs/exec.c (do_execveat_common),
++ * fs/open.c (do_faccessat) and fs/stat.c (vfs_statx) call the new-style
++ * ksu_handle_execveat / ksu_handle_faccessat / ksu_handle_stat hooks
++ * directly, and those own su-compat, ksud, adb-root and init handling.
++ * The bridge therefore keeps only:
++ *   - the init/tracepoint mark tracking (Nova-specific housekeeping),
++ *   - the preinit exec swap (syscall layer, pid 1),
++ *   - the setresuid classification, which must run BEFORE the uid change
++ *     (mirrors the official susfs kprobe pre-handler flow: zygote still
++ *     runs as root and the requested ruid is the new identity).
++ * Everything else passes straight through to the real syscall.
++ */
++
+ static int ksu_handle_init_mark_tracker(const char __user **filename_user)
+ {
+     char path[64];
+@@ -48,22 +65,6 @@
+     return 0;
+ }
+ 
+-long __nocfi ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs)
+-{
+-    if (!ksu_su_compat_enabled)
+-        return ksu_syscall_table[orig_nr](regs);
+-
+-    return ksu_handle_stat_sucompat(orig_nr, (struct pt_regs *)regs);
+-}
+-
+-long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
+-{
+-    if (!ksu_su_compat_enabled)
+-        return ksu_syscall_table[orig_nr](regs);
+-
+-    return ksu_handle_faccessat_sucompat(orig_nr, (struct pt_regs *)regs);
+-}
+-
+ DEFINE_STATIC_KEY_TRUE(ksud_execve_key);
+ 
+ void ksu_stop_ksud_execve_hook()
+@@ -77,17 +78,9 @@
+         execveat ? (const char __user **)&PT_REGS_PARM2(regs) : (const char __user **)&PT_REGS_SYSCALL_PARM1(regs);
+     const char __user *const __user *argv_user = execveat ? (const char __user *const __user *)PT_REGS_PARM3(regs) :
+                                                             (const char __user *const __user *)PT_REGS_PARM2(regs);
+-    bool current_is_init = is_init(current_cred());
+-    struct ksu_sulog_pending_event *pending_root_execve = NULL;
+     long ret;
+ 
+-    if (static_branch_unlikely(&ksud_execve_key)) {
+-        if (execveat) {
+-            ksu_execveat_hook_ksud(regs);
+-        } else {
+-            ksu_execve_hook_ksud(regs);
+-        }
+-    }
++    ksu_handle_init_mark_tracker(filename_user);
+ 
+     /*
+      * Newer Android releases' init execs selinux_setup with execveat()
+@@ -98,26 +91,7 @@
+         ksu_preinit_handle_execve(filename_user, argv_user, orig_nr, (struct pt_regs *)regs, &ret))
          return ret;
  
--    ksu_handle_setresuid(old_uid, current_uid().val);
-+    {
-+        uid_t new_uid = current_uid().val;
-+        ksu_handle_setresuid(old_uid, new_uid, new_uid);
-+    }
-     return ret;
+-    if (current_euid().val == 0)
+-        pending_root_execve = ksu_sulog_capture_root_execve(*filename_user, argv_user, GFP_KERNEL);
+-
+-    if (current->pid != 1 && current_is_init) {
+-        ksu_handle_init_mark_tracker(filename_user);
+-        ret = execveat ? ksu_adb_root_handle_execveat((struct pt_regs *)regs) :
+-                         ksu_adb_root_handle_execve((struct pt_regs *)regs);
+-        if (ret) {
+-            pr_err("adb root failed: %ld\n", ret);
+-        }
+-    } else if (ksu_su_compat_enabled) {
+-        ret = execveat ? ksu_handle_execveat_sucompat(filename_user, orig_nr, (struct pt_regs *)regs) :
+-                         ksu_handle_execve_sucompat(filename_user, orig_nr, (struct pt_regs *)regs);
+-        ksu_sulog_emit_pending(pending_root_execve, ret, GFP_KERNEL);
+-        return ret;
+-    }
+-
+-    ret = ksu_syscall_table[orig_nr](regs);
+-    ksu_sulog_emit_pending(pending_root_execve, ret, GFP_KERNEL);
+-    return ret;
++    return ksu_syscall_table[orig_nr](regs);
  }
-diff -ruN SukiSU-Nova-main/kernel/include/ksu.h nova_patched/kernel/include/ksu.h
---- SukiSU-Nova-main/kernel/include/ksu.h	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/include/ksu.h	2026-11-17 08:27:47.942706900 +0800
-@@ -8,11 +8,7 @@
- #define KERNEL_SU_VERSION KSU_VERSION
  
- extern struct cred *ksu_cred;
--extern bool ksu_late_loaded;
- extern bool allow_shell;
--#ifdef MODULE
--extern bool ksu_bundled;
--#endif
- extern struct selinux_policy *backup_sepolicy;
- extern bool ksu_no_custom_rc;
+ long __nocfi ksu_hook_execve(int orig_nr, const struct pt_regs *regs)
+@@ -130,14 +104,27 @@
+     return ksu_hook_execve_common(orig_nr, regs, true);
+ }
  
-diff -ruN SukiSU-Nova-main/kernel/manager/pkg_observer.c nova_patched/kernel/manager/pkg_observer.c
---- SukiSU-Nova-main/kernel/manager/pkg_observer.c	2026-11-16 01:07:05.000000000 +0800
+-long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
++long __nocfi ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs)
+ {
+-    uid_t old_uid = current_uid().val;
+-    long ret = ksu_syscall_table[orig_nr](regs);
++    return ksu_syscall_table[orig_nr](regs);
++}
+ 
+-    if (ret < 0)
+-        return ret;
++long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
++{
++    return ksu_syscall_table[orig_nr](regs);
++}
++
++long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
++{
++    uid_t ruid = (uid_t)PT_REGS_SYSCALL_PARM1(regs);
++    uid_t euid = (uid_t)PT_REGS_SYSCALL_PARM2(regs);
++    uid_t suid = (uid_t)PT_REGS_SYSCALL_PARM3(regs);
++
++    /* SUSFS port: classify BEFORE the uid change - zygote still runs as
++     * root and the requested ruid is the new identity. Calling after the
++     * syscall would bail out on the cur_uid != 0 guard and SUSFS process
++     * marks would never be set. */
++    ksu_handle_setresuid(ruid, euid, suid);
+ 
+-    ksu_handle_setresuid(old_uid, current_uid().val);
+-    return ret;
++    return ksu_syscall_table[orig_nr](regs);
+ }
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/manager/pkg_observer.c nova_patched/kernel/manager/pkg_observer.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/manager/pkg_observer.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/manager/pkg_observer.c	2026-11-17 08:27:47.954706800 +0800
 @@ -8,6 +8,7 @@
  #include <linux/rculist.h>
@@ -2630,17 +2685,19 @@ diff -ruN SukiSU-Nova-main/kernel/manager/pkg_observer.c nova_patched/kernel/man
  }
  
  // Never scan from the fsnotify handler: fsnotify_mark_srcu and the rename's dir
-diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/policy/app_profile.c
---- SukiSU-Nova-main/kernel/policy/app_profile.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/policy/app_profile.c	2026-11-17 08:27:47.992706700 +0800
-@@ -1,6 +1,3 @@
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kernel/policy/app_profile.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c	2026-11-16 01:07:05.000000000 +0800
++++ nova_patched/kernel/policy/app_profile.c	2026-11-17 09:50:26.997546400 +0800
+@@ -1,7 +1,5 @@
 -#include "hook/patch_memory.h"
 -#include "infra/symbol_resolver.h"
 -#include "linux/kallsyms.h"
  #include <linux/capability.h>
++#include <linux/init.h>
  #include <linux/cred.h>
  #include <linux/sched.h>
-@@ -19,7 +16,6 @@
+ #include <linux/sched/user.h>
+@@ -19,7 +17,6 @@
  #include "klog.h" // IWYU pragma: keep
  #include "selinux/selinux.h"
  #include "infra/su_mount_ns.h"
@@ -2648,7 +2705,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
  
  #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
  static struct group_info root_groups = { .usage = REFCOUNT_INIT(2) };
-@@ -68,18 +64,7 @@
+@@ -68,18 +65,7 @@
  
  void seccomp_filter_release(struct task_struct *tsk);
  
@@ -2668,7 +2725,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
  {
      struct task_struct *fake;
  
-@@ -106,15 +91,9 @@
+@@ -106,15 +92,9 @@
      atomic_set(&current->seccomp.filter_count, 0);
      spin_unlock_irq(&current->sighand->siglock);
  
@@ -2685,7 +2742,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
  #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
      // https://github.com/torvalds/linux/commit/0d8315dddd2899f519fe1ca3d4d5cdaf44ea421e#diff-45eb79a57536d8eccfc1436932f093eb5c0b60d9361c39edb46581ad313e8987R556-R558
      fake->sighand = NULL;
-@@ -128,8 +107,6 @@
+@@ -128,8 +108,6 @@
  {
      int ret = 0;
      struct cred *cred;
@@ -2694,7 +2751,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
      struct root_profile *profile = NULL;
      struct user_struct *new_user;
  
-@@ -139,11 +116,6 @@
+@@ -139,11 +117,6 @@
          return -ENOMEM;
      }
  
@@ -2706,7 +2763,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
      if (test_thread_flag(TIF_KSU_DISABLE_ESCAPE_WITH_ROOT)) {
          pr_warn("TIF_KSU_DISABLE_ESCAPE_WITH_ROOT found, don't escape!\n");
          goto out_abort_creds;
-@@ -193,7 +165,11 @@
+@@ -193,7 +166,11 @@
      }
  #endif
  
@@ -2719,7 +2776,7 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
      memcpy(&cred->cap_permitted, &profile->capabilities.effective, sizeof(cred->cap_permitted));
      memcpy(&cred->cap_bset, &profile->capabilities.effective, sizeof(cred->cap_bset));
      if (profile->uid != 0) {
-@@ -206,16 +182,13 @@
+@@ -206,16 +183,13 @@
  
      commit_creds(cred);
  
@@ -2738,11 +2795,17 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
      setup_mount_ns(profile->namespaces);
      ksu_put_root_profile(profile);
      return 0;
-@@ -227,31 +200,16 @@
+@@ -227,31 +201,22 @@
      return ret;
  }
  
 -void escape_to_root_for_init(void)
++/* Nova: kept for core/init.c (official susfs patch dropped the probe body;
++ * the kallsyms compat machinery it probed is no longer present in this tree). */
++void __init ksu_app_profile_init(void)
++{
++}
++
 +int escape_to_root_for_init(void)
  {
      struct cred *cred = prepare_creds();
@@ -2773,41 +2836,20 @@ diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.c nova_patched/kernel/polic
 -#endif
 +    return 0;
  }
-diff -ruN SukiSU-Nova-main/kernel/policy/app_profile.h nova_patched/kernel/policy/app_profile.h
---- SukiSU-Nova-main/kernel/policy/app_profile.h	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/policy/app_profile.h	2026-11-17 08:27:48.009707900 +0800
-@@ -2,16 +2,13 @@
- #define __KSU_H_APP_PROFILE
- 
- #include "uapi/app_profile.h"
--#include "linux/init.h"
- 
- #define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT 63
- 
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.h nova_patched/kernel/policy/app_profile.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.h	2026-11-16 01:07:05.000000000 +0800
++++ nova_patched/kernel/policy/app_profile.h	2026-11-17 09:49:11.674914700 +0800
+@@ -9,7 +9,7 @@
  // Escalate current process to root with the appropriate profile
  int escape_with_root_profile(void);
  
 -void escape_to_root_for_init(void);
--
--void __init ksu_app_profile_init(void);
 +int escape_to_root_for_init(void);
  
- void escape_to_root_for_cmd_su(uid_t target_uid, pid_t target_pid);
+ void __init ksu_app_profile_init(void);
  
-diff -ruN SukiSU-Nova-main/kernel/policy/feature.h nova_patched/kernel/policy/feature.h
---- SukiSU-Nova-main/kernel/policy/feature.h	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/policy/feature.h	2026-11-17 08:27:48.023708400 +0800
-@@ -2,7 +2,7 @@
- #define __KSU_H_FEATURE
- 
- #include <linux/types.h>
--#include "uapi/feature.h" // IWYU pragma: keep
-+#include "uapi/feature.h"
- 
- typedef int (*ksu_feature_get_t)(u64 *value);
- typedef int (*ksu_feature_set_t)(u64 value);
-diff -ruN SukiSU-Nova-main/kernel/preinit/preinit.c nova_patched/kernel/preinit/preinit.c
---- SukiSU-Nova-main/kernel/preinit/preinit.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c nova_patched/kernel/preinit/preinit.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/preinit/preinit.c	2026-11-17 08:27:48.036707100 +0800
 @@ -12,7 +12,7 @@
  
@@ -2942,8 +2984,8 @@ diff -ruN SukiSU-Nova-main/kernel/preinit/preinit.c nova_patched/kernel/preinit/
 +{
 +    return false;
  }
-diff -ruN SukiSU-Nova-main/kernel/preinit/preinit.h nova_patched/kernel/preinit/preinit.h
---- SukiSU-Nova-main/kernel/preinit/preinit.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.h nova_patched/kernel/preinit/preinit.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/preinit/preinit.h	2026-11-17 08:27:48.044709000 +0800
 @@ -21,6 +21,7 @@
  #else
@@ -2970,8 +3012,8 @@ diff -ruN SukiSU-Nova-main/kernel/preinit/preinit.h nova_patched/kernel/preinit/
      return false;
  }
  #endif
-diff -ruN SukiSU-Nova-main/kernel/runtime/boot_event.c nova_patched/kernel/runtime/boot_event.c
---- SukiSU-Nova-main/kernel/runtime/boot_event.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/boot_event.c nova_patched/kernel/runtime/boot_event.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/runtime/boot_event.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/runtime/boot_event.c	2026-11-17 08:27:48.073708100 +0800
 @@ -16,6 +16,7 @@
  
@@ -2993,8 +3035,8 @@ diff -ruN SukiSU-Nova-main/kernel/runtime/boot_event.c nova_patched/kernel/runti
      ksu_selinux_hide_handle_post_fs_data();
      // retry forced features which failed at second stage
      ksu_feature_apply_forced();
-diff -ruN SukiSU-Nova-main/kernel/runtime/ksud.h nova_patched/kernel/runtime/ksud.h
---- SukiSU-Nova-main/kernel/runtime/ksud.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud.h nova_patched/kernel/runtime/ksud.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/runtime/ksud.h	2026-11-17 08:27:48.083707600 +0800
 @@ -8,8 +8,41 @@
  void ksu_ksud_init();
@@ -3041,8 +3083,8 @@ diff -ruN SukiSU-Nova-main/kernel/runtime/ksud.h nova_patched/kernel/runtime/ksu
 +                             struct user_arg_ptr *argv,
 +                             struct user_arg_ptr *envp, int *flags);
  #endif
-diff -ruN SukiSU-Nova-main/kernel/runtime/ksud_integration.c nova_patched/kernel/runtime/ksud_integration.c
---- SukiSU-Nova-main/kernel/runtime/ksud_integration.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patched/kernel/runtime/ksud_integration.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/runtime/ksud_integration.c	2026-11-17 08:36:37.410395800 +0800
 @@ -11,7 +11,6 @@
  #include <linux/fs.h>
@@ -3435,8 +3477,8 @@ diff -ruN SukiSU-Nova-main/kernel/runtime/ksud_integration.c nova_patched/kernel
      if (module_rc_buf) {
          free_module_rc();
      }
-diff -ruN SukiSU-Nova-main/kernel/selinux/rules.c nova_patched/kernel/selinux/rules.c
---- SukiSU-Nova-main/kernel/selinux/rules.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/selinux/rules.c nova_patched/kernel/selinux/rules.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/selinux/rules.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/selinux/rules.c	2026-11-17 08:27:48.174709300 +0800
 @@ -27,17 +27,17 @@
  extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
@@ -3502,8 +3544,8 @@ diff -ruN SukiSU-Nova-main/kernel/selinux/rules.c nova_patched/kernel/selinux/ru
      ret = success_cmd_count;
      goto out_unlock;
  
-diff -ruN SukiSU-Nova-main/kernel/selinux/selinux.c nova_patched/kernel/selinux/selinux.c
---- SukiSU-Nova-main/kernel/selinux/selinux.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/selinux/selinux.c nova_patched/kernel/selinux/selinux.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/selinux/selinux.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/selinux/selinux.c	2026-11-17 08:27:48.187707800 +0800
 @@ -234,3 +234,93 @@
      }
@@ -3599,8 +3641,8 @@ diff -ruN SukiSU-Nova-main/kernel/selinux/selinux.c nova_patched/kernel/selinux/
 +    susfs_set_sid(KERNEL_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
 +}
 +
-diff -ruN SukiSU-Nova-main/kernel/selinux/selinux.h nova_patched/kernel/selinux/selinux.h
---- SukiSU-Nova-main/kernel/selinux/selinux.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/selinux/selinux.h nova_patched/kernel/selinux/selinux.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/selinux/selinux.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/selinux/selinux.h	2026-11-17 08:27:48.198707500 +0800
 @@ -68,4 +68,12 @@
  
@@ -3615,8 +3657,8 @@ diff -ruN SukiSU-Nova-main/kernel/selinux/selinux.h nova_patched/kernel/selinux/
 +bool susfs_is_current_ksu_domain(void);
 +bool susfs_is_current_init_domain(void);
  #endif
-diff -ruN SukiSU-Nova-main/kernel/selinux/sepolicy.c nova_patched/kernel/selinux/sepolicy.c
---- SukiSU-Nova-main/kernel/selinux/sepolicy.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/selinux/sepolicy.c nova_patched/kernel/selinux/sepolicy.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/selinux/sepolicy.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/selinux/sepolicy.c	2026-11-17 08:27:48.206707900 +0800
 @@ -14,6 +14,11 @@
  #include "klog.h" // IWYU pragma: keep
@@ -3651,8 +3693,8 @@ diff -ruN SukiSU-Nova-main/kernel/selinux/sepolicy.c nova_patched/kernel/selinux
      return true;
  }
  
-diff -ruN SukiSU-Nova-main/kernel/sulog/event.c nova_patched/kernel/sulog/event.c
---- SukiSU-Nova-main/kernel/sulog/event.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/sulog/event.c nova_patched/kernel/sulog/event.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/sulog/event.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/sulog/event.c	2026-11-17 08:27:48.217713200 +0800
 @@ -14,6 +14,7 @@
  #include <linux/mm.h>
@@ -3806,8 +3848,8 @@ diff -ruN SukiSU-Nova-main/kernel/sulog/event.c nova_patched/kernel/sulog/event.
  }
  
  void ksu_sulog_emit_pending(struct ksu_sulog_pending_event *pending, int retval, gfp_t gfp)
-diff -ruN SukiSU-Nova-main/kernel/sulog/event.h nova_patched/kernel/sulog/event.h
---- SukiSU-Nova-main/kernel/sulog/event.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/sulog/event.h nova_patched/kernel/sulog/event.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/sulog/event.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/sulog/event.h	2026-11-17 08:27:48.226709300 +0800
 @@ -5,6 +5,7 @@
  #include <linux/gfp.h>
@@ -3830,8 +3872,8 @@ diff -ruN SukiSU-Nova-main/kernel/sulog/event.h nova_patched/kernel/sulog/event.
  void ksu_sulog_emit_pending(struct ksu_sulog_pending_event *pending, int retval, gfp_t gfp);
  int ksu_sulog_emit_grant_root(int retval, __u32 uid, __u32 euid, gfp_t gfp);
  
-diff -ruN SukiSU-Nova-main/kernel/supercall/dispatch.c nova_patched/kernel/supercall/dispatch.c
---- SukiSU-Nova-main/kernel/supercall/dispatch.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kernel/supercall/dispatch.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/supercall/dispatch.c	2026-11-17 08:27:48.240472500 +0800
 @@ -9,6 +9,8 @@
  #include <linux/uaccess.h>
@@ -4095,8 +4137,8 @@ diff -ruN SukiSU-Nova-main/kernel/supercall/dispatch.c nova_patched/kernel/super
  static int do_nuke_ext4_sysfs(void __user *arg)
  {
      struct ksu_nuke_ext4_sysfs_cmd cmd;
-diff -ruN SukiSU-Nova-main/kernel/supercall/supercall.c nova_patched/kernel/supercall/supercall.c
---- SukiSU-Nova-main/kernel/supercall/supercall.c	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c nova_patched/kernel/supercall/supercall.c
+--- SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/supercall/supercall.c	2026-11-17 08:39:02.516191200 +0800
 @@ -64,21 +64,21 @@
  
@@ -4180,8 +4222,8 @@ diff -ruN SukiSU-Nova-main/kernel/supercall/supercall.c nova_patched/kernel/supe
  }
  
  static struct kprobe reboot_kp = {
-diff -ruN SukiSU-Nova-main/kernel/supercall/supercall.h nova_patched/kernel/supercall/supercall.h
---- SukiSU-Nova-main/kernel/supercall/supercall.h	2026-11-16 01:07:05.000000000 +0800
+diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.h nova_patched/kernel/supercall/supercall.h
+--- SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.h	2026-11-16 01:07:05.000000000 +0800
 +++ nova_patched/kernel/supercall/supercall.h	2026-11-17 08:38:50.831191300 +0800
 @@ -26,4 +26,7 @@
  
