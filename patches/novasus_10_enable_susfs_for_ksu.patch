@@ -2517,7 +2517,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.h nova_patched/kernel
  #endif
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/syscall_event_bridge.c nova_patched/kernel/hook/syscall_event_bridge.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/hook/syscall_event_bridge.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/hook/syscall_event_bridge.c	2026-11-17 09:49:01.159741800 +0800
++++ nova_patched/kernel/hook/syscall_event_bridge.c	2026-11-17 10:08:28.066058900 +0800
 @@ -1,3 +1,4 @@
 +// SPDX-License-Identifier: GPL-2.0
  #include "linux/compiler.h"
@@ -2645,8 +2645,8 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/syscall_event_bridge.c nova_patch
 +long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
 +{
 +    uid_t ruid = (uid_t)PT_REGS_SYSCALL_PARM1(regs);
-+    uid_t euid = (uid_t)PT_REGS_SYSCALL_PARM2(regs);
-+    uid_t suid = (uid_t)PT_REGS_SYSCALL_PARM3(regs);
++    uid_t euid = (uid_t)PT_REGS_PARM2(regs);
++    uid_t suid = (uid_t)PT_REGS_PARM3(regs);
 +
 +    /* SUSFS port: classify BEFORE the uid change - zygote still runs as
 +     * root and the requested ruid is the new identity. Calling after the
@@ -4139,7 +4139,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
      struct ksu_nuke_ext4_sysfs_cmd cmd;
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c nova_patched/kernel/supercall/supercall.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/supercall/supercall.c	2026-11-17 08:39:02.516191200 +0800
++++ nova_patched/kernel/supercall/supercall.c	2026-11-17 10:08:37.759289700 +0800
 @@ -64,21 +64,21 @@
  
      fd = get_unused_fd_flags(fd_flags);
@@ -4197,7 +4197,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c nova_patched/ker
      struct pt_regs *real_regs = PT_REAL_REGS(regs);
      int magic1 = (int)PT_REGS_SYSCALL_PARM1(real_regs);
      int magic2 = (int)PT_REGS_PARM2(real_regs);
-+    unsigned int cmd = (unsigned int)PT_REGS_SYSCALL_PARM3(real_regs);
++    unsigned int cmd = (unsigned int)PT_REGS_PARM3(real_regs);
 +    void __user *arg = (void __user *)PT_REGS_SYSCALL_PARM4(real_regs);
  
 -    if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
