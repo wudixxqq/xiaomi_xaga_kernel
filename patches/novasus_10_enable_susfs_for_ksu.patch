@@ -4165,8 +4165,16 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
      struct ksu_nuke_ext4_sysfs_cmd cmd;
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c nova_patched/kernel/supercall/supercall.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/supercall/supercall.c	2026-11-17 10:08:37.759289700 +0800
-@@ -64,21 +64,21 @@
++++ nova_patched/kernel/supercall/supercall.c	2026-11-17 10:43:36.690179900 +0800
+@@ -14,6 +14,7 @@
+ #include "uapi/supercall.h"
+ #include "extension/extension.h"
+ #include "supercall/internal.h"
++#include "supercall/supercall.h" // susfs port: ksu_handle_sys_reboot decl
+ #include "arch.h"
+ #include "util.h"
+ #include "klog.h" // IWYU pragma: keep
+@@ -64,21 +65,21 @@
  
      fd = get_unused_fd_flags(fd_flags);
      if (fd < 0) {
@@ -4191,7 +4199,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/supercall.c nova_patched/ker
      return fd;
  }
  
-@@ -114,30 +114,38 @@
+@@ -114,30 +115,38 @@
      kfree(tw);
  }
  
