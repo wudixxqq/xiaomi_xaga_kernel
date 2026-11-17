@@ -1,0 +1,126 @@
+name: Build XAGA Kernel — FinaSU + SUSFS (GKI 5.10)
+
+# Full delivery: FinaSU (tiann/KernelSU downstream with NATIVE susfs support)
+# + official susfs4ksu kernel patch. Same proven ABI recipe as build_bakasu.sh:
+# ThinLTO + CFI + MODVERSIONS must stay ON for stock vendor modules.
+# Backend: Tracepoint + SUSFS feature layer (no Inline -> only reboot.c hook).
+# Kernel name and build timestamp follow the stock V14.0.6.0 banner exactly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      finasu_ref:
+        description: 'FinaSU kernel driver ref (master / commit)'
+        required: false
+        default: '06d71e8a08bb'
+      enable_susfs:
+        description: 'Integrate kernel-level SUSFS'
+        type: boolean
+        default: true
+  push:
+    branches: [ mglru ]
+    paths:
+      - 'scripts/build_finasu.sh'
+      - '.github/workflows/build-finasu-susfs.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xaga-finasu-susfs
+  cancel-in-progress: false
+
+env:
+  FINASU_REF_DEFAULT: 06d71e8a08bb
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout (includes vendored stock boot chunks)
+        uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            device-tree-compiler ccache curl wget git zip unzip p7zip-full \
+            zstd lz4 xz-utils rsync ca-certificates python3
+
+      - name: Verify stock boot chunks
+        run: |
+          cat boot-bakasu/boot.img.part-*.part > /tmp/stock-verify.img
+          echo "8a818f319380a7bb2e432f8cf6eed2aaa0a7d5c1ac57cc2bbcf191b557b58faf  /tmp/stock-verify.img" | sha256sum -c -
+          rm -f /tmp/stock-verify.img
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-xaga-finasu-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-xaga-finasu-${{ runner.os }}-
+
+      - name: Build (FinaSU + SUSFS + boot.img + AK3)
+        run: |
+          chmod +x scripts/build_finasu.sh
+          FINASU_REF="${{ inputs.finasu_ref || env.FINASU_REF_DEFAULT }}" \
+          ENABLE_SUSFS="${{ inputs.enable_susfs && '1' || '1' }}" \
+          JOBS=4 bash scripts/build_finasu.sh
+
+      - name: Verify SUSFS really present in boot kernel
+        run: |
+          python3 - <<'PY'
+          import sys
+          counts = {}
+          for line in open('artifacts-finasu/symbol-counts.txt'):
+              if ':' in line:
+                  k,v = line.split(':',1); counts[k.strip()] = int(v.strip())
+          print('kernel symbol counts:', counts)
+          susfs = counts.get('SUSFS strings', 0)
+          ksu = counts.get('KernelSU strings', 0)
+          finasu = counts.get('FinaSU strings', 0)
+          if ksu < 10:
+              print('ERROR: KernelSU/FinaSU not present in kernel', file=sys.stderr); sys.exit(1)
+          if finasu < 1:
+              print('ERROR: FinaSU driver identity strings missing', file=sys.stderr); sys.exit(1)
+          if susfs < 5:
+              print('ERROR: kernel-level SUSFS symbols missing (got %d)' % susfs, file=sys.stderr); sys.exit(1)
+          print('OK: FinaSU + kernel-level SUSFS confirmed in compiled kernel.')
+          PY
+
+      - name: Upload delivery artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-finasu-susfs-${{ github.run_number }}
+          path: |
+            artifacts-finasu/boot.img
+            artifacts-finasu/AnyKernel3-FinaSU-SUSFS-xaga.zip
+            artifacts-finasu/SHA256SUMS.txt
+            artifacts-finasu/kernel.config.txt
+            artifacts-finasu/kernel-source.txt
+            artifacts-finasu/finasu-driver.txt
+            artifacts-finasu/kernel-banner.txt
+            artifacts-finasu/symbol-counts.txt
+            artifacts-finasu/susfs-hooked-files.txt
+            artifacts-finasu/reboot-hook.txt
+            artifacts-finasu/build.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### XAGA FinaSU+SUSFS build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Status: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- FinaSU ref: ${{ inputs.finasu_ref || env.FINASU_REF_DEFAULT }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts-finasu/symbol-counts.txt ]; then
+            echo "- Symbols: $(tr '\n' ' ' < artifacts-finasu/symbol-counts.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts-finasu/SHA256SUMS.txt ]; then
+            echo "- Outputs:" >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts-finasu/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
