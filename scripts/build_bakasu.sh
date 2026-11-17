@@ -49,6 +49,7 @@ MAGISK_URL="${MAGISK_URL:-https://github.com/topjohnwu/Magisk/releases/download/
 STOCK_KREL="${STOCK_KREL:-5.10.136-android12-9-00020-gc9f59ef34367-ab9585114}"
 SCMVERSION_SUFFIX="${SCMVERSION_SUFFIX:--android12-9-00020-gc9f59ef34367-ab9585114}"
 STOCK_BOOT_SHA="${STOCK_BOOT_SHA:-8a818f319380a7bb2e432f8cf6eed2aaa0a7d5c1ac57cc2bbcf191b557b58faf}"
+STOCK_BTS="${STOCK_BTS:-Wed Feb 8 23:50:57 UTC 2023}"   # stock compile timestamp (extracted from stock kernel image)
 STOCK_CHUNKS_DIR="${STOCK_CHUNKS_DIR:-$REPO_ROOT/boot-bakasu}"
 
 ENABLE_SUSFS="${ENABLE_SUSFS:-1}"
@@ -175,6 +176,10 @@ info "--- kernelrelease: $(make $MAKEARGS -s kernelrelease) ---"
 # ------------------------------ build --------------------------------------
 info "Building kernel Image (ThinLTO+CFI, jobs=$JOBS) ..."
 export KBUILD_BUILD_USER=build-user KBUILD_BUILD_HOST=build-host KBUILD_BUILD_VERSION=1
+# Freeze the compile timestamp to the stock one: uname -a then matches stock
+# exactly (defeats "kernel newer than boot" heuristics; stock = #1 Wed Feb 8 23:50:57 UTC 2023).
+# mkcompile_h uses KBUILD_BUILD_TIMESTAMP verbatim for UTS_VERSION.
+export KBUILD_BUILD_TIMESTAMP="$STOCK_BTS"
 make $MAKEARGS -j"$JOBS" \
   CONFIG_LTO_CLANG=y CONFIG_LTO_NONE=n CONFIG_LTO_CLANG_THIN=y CONFIG_LTO_CLANG_FULL=n \
   Image 2>&1 | tee "$ARTIFACTS/build.log"
@@ -187,6 +192,7 @@ info "Verifying kernel image ..."
 # the real banner and grep -m1 would pick it (CI run 43974154021 lesson).
 strings out/arch/arm64/boot/Image | grep -m1 "Linux version ${STOCK_KREL}" | tee "$ARTIFACTS/kernel-banner.txt"
 [[ -s "$ARTIFACTS/kernel-banner.txt" ]] || die "kernel banner mismatch (vermagic risk)"
+grep -q "#1 SMP PREEMPT ${STOCK_BTS}" "$ARTIFACTS/kernel-banner.txt" || die "build timestamp mismatch (expected: #1 SMP PREEMPT ${STOCK_BTS})"
 KSU_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'KernelSU' || true)
 SUSFS_STR=$(strings out/arch/arm64/boot/Image | grep -c -i 'susfs' || true)
 info "KernelSU strings: $KSU_STR | SUSFS strings: $SUSFS_STR"
