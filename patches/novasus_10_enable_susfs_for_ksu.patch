@@ -344,7 +344,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/kernel_umount.c nova_patched/k
  
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/kernel/feature/selinux_hide.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/feature/selinux_hide.c	2026-11-17 08:27:47.875065900 +0800
++++ nova_patched/kernel/feature/selinux_hide.c	2026-11-17 10:30:44.435245700 +0800
 @@ -1,7 +1,4 @@
  #include "selinux_hide.h"
 -#include "infra/symbol_resolver.h"
@@ -361,7 +361,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
  // security/selinux/include/security.h
  #include <security.h>
  #include <ss/context.h>
-@@ -29,421 +27,18 @@
+@@ -29,421 +27,24 @@
  #include <ss/conditional.h>
  #include "avc.h"
  #include "klog.h" // IWYU pragma: keep
@@ -370,15 +370,18 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
 -#include "hook/patch_memory.h"
  #include "ksu.h"
  #include "policy/feature.h"
--#include "hook/lsm_hook.h"
+ #include "hook/lsm_hook.h"
++#include "hook/patch_memory.h"
++#include "infra/symbol_resolver.h"
++#include "linux/jump_label.h"
++#include "linux/kallsyms.h"
++#include "linux/rcupdate.h"
  
  static DEFINE_MUTEX(selinux_hide_mutex);
 -static bool ksu_selinux_hide_enabled __read_mostly = false;
 -static bool ksu_selinux_hide_running __read_mostly = false;
 -static bool ksu_selinux_hide_keep_backup __read_mostly = false;
-+bool ksu_selinux_hide_enabled __read_mostly = false;
-+bool ksu_selinux_hide_running __read_mostly = false;
- 
+-
 -enum sel_inos {
 -    SEL_ROOT_INO = 2,
 -    SEL_LOAD, /* load policy */
@@ -613,9 +616,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
 -            return error;
 -        }
 -    }
-+DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
-+struct page *fake_status = NULL;
- 
+-
 -    new = prepare_creds();
 -    if (!new)
 -        return -ENOMEM;
@@ -779,16 +780,20 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
 -        return -ENOENT;
 -    return 0;
 -}
--
++bool ksu_selinux_hide_enabled __read_mostly = false;
++bool ksu_selinux_hide_running __read_mostly = false;
+ 
 -static DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 -static struct page *fake_status = NULL;
--
++DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
++struct page *fake_status = NULL;
+ 
 -static void initialize_fake_status()
 +void initialize_fake_status()
  {
      mutex_lock(&selinux_state.status_lock);
      if (fake_status)
-@@ -454,7 +49,7 @@
+@@ -454,7 +55,7 @@
      }
  
      struct selinux_kernel_status *status = page_address(selinux_state.status_page);
@@ -797,7 +802,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
          pr_warn("initialize_fake_status: skip not enforcing\n");
          goto out;
      }
-@@ -467,22 +62,6 @@
+@@ -467,22 +68,6 @@
  
      struct selinux_kernel_status *new_status = page_address(new_page);
      memcpy(new_status, status, sizeof(*status));
@@ -820,7 +825,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
  
      fake_status = new_page;
      pr_info("initialize_fake_status initialized: sequence=%d, policyload=%d, enforcing=%d\n", new_status->sequence,
-@@ -492,131 +71,32 @@
+@@ -492,131 +77,32 @@
      mutex_unlock(&selinux_state.status_lock);
  }
  
@@ -965,7 +970,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
  }
  
  static int selinux_hide_feature_get(u64 *value)
-@@ -641,10 +121,11 @@
+@@ -641,10 +127,11 @@
          }
      } else {
          if (ksu_selinux_hide_running) {
@@ -978,7 +983,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
      mutex_unlock(&selinux_hide_mutex);
      return ret;
  }
-@@ -656,65 +137,18 @@
+@@ -656,65 +143,18 @@
      .set_handler = selinux_hide_feature_set,
  };
  
@@ -1045,7 +1050,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
          ksu_selinux_hide_running = false;
      }
      mutex_unlock(&selinux_hide_mutex);
-@@ -729,7 +163,7 @@
+@@ -729,7 +169,7 @@
  void ksu_selinux_hide_drop_backup_if_unused()
  {
      mutex_lock(&selinux_hide_mutex);
@@ -1054,7 +1059,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
          pr_info("selinux_hide is not enabled - drop backup_sepolicy\n");
          sidtab_destroy(backup_sepolicy->sidtab);
          kfree(backup_sepolicy->sidtab);
-@@ -737,827 +171,4 @@
+@@ -737,827 +177,4 @@
          backup_sepolicy = NULL;
      }
      mutex_unlock(&selinux_hide_mutex);
@@ -1886,7 +1891,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/selinux_hide.c nova_patched/ke
 \ No newline at end of file
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel/feature/sucompat.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/feature/sucompat.c	2026-11-17 08:27:47.886705900 +0800
++++ nova_patched/kernel/feature/sucompat.c	2026-11-17 10:30:44.439246200 +0800
 @@ -1,6 +1,3 @@
 -#include "linux/file.h"
 -#include "linux/fcntl.h"
@@ -1907,7 +1912,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
  
  #include "arch.h"
  #include "policy/allowlist.h"
-@@ -21,28 +24,38 @@
+@@ -21,28 +24,43 @@
  #include "klog.h" // IWYU pragma: keep
  #include "runtime/ksud.h"
  #include "feature/sucompat.h"
@@ -1919,6 +1924,11 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -#include "ksu.h"
 +#include "uapi/sulog.h"
  #include "util.h"
++#include "hook/syscall_hook.h"
++#include "ksu.h"
++#include "linux/fcntl.h"
++#include "linux/file.h"
++#include "linux/namei.h"
  
  #define SU_PATH "/system/bin/su"
  #define SH_PATH "/system/bin/sh"
@@ -1951,7 +1961,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
      pr_info("su_compat: set to %d\n", enable);
      return 0;
  }
-@@ -54,6 +67,13 @@
+@@ -54,6 +72,13 @@
      .set_handler = su_compat_feature_set,
  };
  
@@ -1965,7 +1975,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
  static char __user *ksud_user_path(void)
  {
      static const char ksud_path[] = KSUD_PATH;
-@@ -61,210 +81,180 @@
+@@ -61,210 +86,180 @@
      return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
  }
  
@@ -2107,6 +2117,9 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
  
 -    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 +    ret = escape_with_root_profile();
++
++    pr_info("ksu_handle_execveat_sucompat: su->ksud!\n");
++    memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
  
 -    char path[sizeof(su_path) + 1];
 -    memset(path, 0, sizeof(path));
@@ -2125,19 +2138,32 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -        } else {
 -            revert_creds(old_cred);
 -        }
--    }
-+    pr_info("ksu_handle_execveat_sucompat: su->ksud!\n");
-+    memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
++    pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr*)argv_user, GFP_KERNEL);
++
++    const char __user *argv_user_ptr = get_user_arg_ptr(*((struct user_arg_ptr*)argv_user), 0);
++    if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
++        pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\n");
++        return -EINVAL;
+     }
  
 -do_orig_stat:
 -    return ksu_syscall_table[orig_nr](regs);
--}
-+    pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr*)argv_user, GFP_KERNEL);
++    ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
++
++    if (ret) {
++        pr_err("escape_with_root_profile() failed: %d\n", ret);
++        return -EINVAL;
++    }
++    return 0;
+ }
  
 -static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
 -                                              const char __user *const __user *argv_user, unsigned long envp,
 -                                              bool execveat, int orig_nr, struct pt_regs *regs)
--{
++int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
++                 void *argv_user, void *envp_user,
++                 int *flags, int *retval)
+ {
 -    const char __user *fn;
 -    struct ksu_sulog_pending_event *pending_sucompat = NULL;
 -    char path[sizeof(su_path) + 1];
@@ -2166,28 +2192,23 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -    if (ret < 0) {
 -        pr_warn("Access filename when execve failed: %ld", ret);
 -        goto do_orig_execve;
-+    const char __user *argv_user_ptr = get_user_arg_ptr(*((struct user_arg_ptr*)argv_user), 0);
-+    if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
-+        pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\n");
-+        return -EINVAL;
++    if (*retval >= 0) {
++        (void)ksu_install_su_fd();
      }
++    return 0;
++}
  
 -    if (likely(memcmp(path, su_path, sizeof(su_path))))
 -        goto do_orig_execve;
 -
 -    pr_info("sys_execve su found\n");
-+    ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
- 
+-
 -    tmp_fd = get_unused_fd_flags(O_CLOEXEC);
 -    if (tmp_fd < 0) {
 -        pr_err("alloc tmp fd err: %d\n", tmp_fd);
 -        goto do_orig_execve;
-+    if (ret) {
-+        pr_err("escape_with_root_profile() failed: %d\n", ret);
-+        return -EINVAL;
-     }
-+    return 0;
-+}
+-    }
++extern struct static_key_true is_first_zygote;
  
 -    old_cred = override_creds(ksu_cred);
 -    ksud_file = filp_open(KSUD_PATH, O_PATH, 0);
@@ -2196,18 +2217,17 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -        pr_err("open ksud err: %ld\n", PTR_ERR(ksud_file));
 -        put_unused_fd(tmp_fd);
 -        goto do_orig_execve;
-+int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
-+                 void *argv_user, void *envp_user,
-+                 int *flags, int *retval)
+-    }
++int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
++            void *envp, int *flags)
 +{
-+    if (*retval >= 0) {
-+        (void)ksu_install_su_fd();
-     }
-+    return 0;
-+}
++    if (static_branch_unlikely(&is_first_zygote))
++        (void)ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags);
  
 -    fd_install(tmp_fd, ksud_file);
-+extern struct static_key_true is_first_zygote;
++    return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp,
++                        flags);
++}
  
 -    pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);
 -    // execve(file, argv, environ)
@@ -2222,20 +2242,19 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -    regs->__PT_PARM3_REG = (unsigned long)argv_user;
 -    regs->__PT_PARM2_REG = empty_user_path();
 -    PT_REGS_SYSCALL_PARM1(regs) = tmp_fd;
-+int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-+            void *envp, int *flags)
++int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,
++             int *__unused_flags)
 +{
-+    if (static_branch_unlikely(&is_first_zygote))
-+        (void)ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags);
++    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
++        return 0;
  
 -    ret = escape_with_root_profile();
 -    if (ret) {
 -        pr_err("escape_with_root_profile failed: %ld\n", ret);
 -    }
 -    ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
-+    return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp,
-+                        flags);
-+}
++    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
++        return 0;
  
 -    ret = ksu_syscall_table[__NR_execveat](regs);
 -    if (ret < 0) {
@@ -2252,15 +2271,6 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.c nova_patched/kernel
 -        if (su_fd < 0) {
 -            pr_warn("install su session fd failed: %d\n", su_fd);
 -        }
-+int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,
-+             int *__unused_flags)
-+{
-+    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
-+        return 0;
-+
-+    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
-+        return 0;
-+
 +    if (current_chrooted())
 +    {
 +        pr_err("ksu_handle_faccessat: su found but NOT allowed! Because current process is running in chrooted environment\n");
@@ -2341,7 +2351,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/feature/sucompat.h nova_patched/kernel
 \ No newline at end of file
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel/hook/setuid_hook.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/hook/setuid_hook.c	2026-11-17 08:38:39.512716800 +0800
++++ nova_patched/kernel/hook/setuid_hook.c	2026-11-17 10:30:44.443245300 +0800
 @@ -11,6 +11,8 @@
  #include <linux/types.h>
  #include <linux/uaccess.h>
@@ -2351,7 +2361,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
  
  #include "policy/allowlist.h"
  #include "hook/setuid_hook.h"
-@@ -18,37 +20,131 @@
+@@ -18,37 +20,132 @@
  #include "manager/manager_identity.h"
  #include "infra/seccomp_cache.h"
  #include "supercall/supercall.h"
@@ -2359,15 +2369,16 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
  #include "feature/kernel_umount.h"
  #include "feature/mount_hide.h"
 +#include "selinux/selinux.h"
- 
--int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
++#include "hook/tp_marker.h"
++
 +// susfs integration (ported from susfs4ksu 10_enable_susfs_for_ksu.patch):
 +// per-process state is tracked via susfs thread flags, driven by zygote SID.
 +extern u32 susfs_zygote_sid;
 +extern u32 susfs_zygote_next_sid;
 +extern void disable_seccomp(void);
 +extern struct work_struct susfs_extra_works;
-+
+ 
+-int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 +static inline void ksu_handle_extra_susfs_work(void)
  {
 -    // we rely on the fact that zygote always call setresuid(3) with same uids
@@ -2381,7 +2392,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
 -        spin_unlock_irq(&current->sighand->siglock);
 +    schedule_work(&susfs_extra_works);
 +}
- 
++
 +static int handle_zygote_setresuid(uid_t ruid) {
 +    // Check if spawned process is isolated service first, and force to do umount if so
 +    if (is_isolated_process(ruid)) {
@@ -2389,7 +2400,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
 +        susfs_set_current_proc_umounted();
 +        goto do_umount;
 +    }
-+
+ 
 +    // - Since ksu manager app uid is excluded in allow_list_arr, so ksu_uid_should_umount(manager_uid)
 +    //   will always return true, that's why we need to explicitly check if ruid belongs to
 +    //   ksu manager.
@@ -2416,8 +2427,10 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
 +        susfs_set_current_proc_no_su();
 +        susfs_set_current_proc_umounted();
 +        goto do_umount;
-+    }
-+
+     }
+ 
+-    // Handle kernel umount
+-    ksu_handle_umount(old_uid, new_uid);
 +    // Disable seccomp restriction for root allowed apps since running with "su" will disable seccomp anyway
 +    if (ksu_is_allow_uid_for_current(ruid)) {
 +        disable_seccomp();
@@ -2447,10 +2460,8 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/hook/setuid_hook.c nova_patched/kernel
 +        susfs_set_current_proc_umounted();
 +        susfs_set_current_proc_umounted_for_zygote_next();
 +        goto do_susfs_work;
-     }
- 
--    // Handle kernel umount
--    ksu_handle_umount(old_uid, new_uid);
++    }
++
 +    if (likely(ksu_is_manager_appid_valid()) && unlikely(is_uid_manager(ruid))) {
 +        disable_seccomp();
 +        pr_info("install fd for manager: %d\n", ruid);
@@ -2687,7 +2698,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/manager/pkg_observer.c nova_patched/ke
  // Never scan from the fsnotify handler: fsnotify_mark_srcu and the rename's dir
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kernel/policy/app_profile.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/policy/app_profile.c	2026-11-17 09:50:26.997546400 +0800
++++ nova_patched/kernel/policy/app_profile.c	2026-11-17 10:30:44.448247600 +0800
 @@ -1,7 +1,5 @@
 -#include "hook/patch_memory.h"
 -#include "infra/symbol_resolver.h"
@@ -2697,15 +2708,18 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
  #include <linux/cred.h>
  #include <linux/sched.h>
  #include <linux/sched/user.h>
-@@ -19,7 +17,6 @@
+@@ -19,7 +17,10 @@
  #include "klog.h" // IWYU pragma: keep
  #include "selinux/selinux.h"
  #include "infra/su_mount_ns.h"
--#include "hook/tp_marker.h"
++#include "hook/patch_memory.h"
+ #include "hook/tp_marker.h"
++#include "infra/symbol_resolver.h"
++#include "linux/kallsyms.h"
  
  #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
  static struct group_info root_groups = { .usage = REFCOUNT_INIT(2) };
-@@ -68,18 +65,7 @@
+@@ -68,18 +69,7 @@
  
  void seccomp_filter_release(struct task_struct *tsk);
  
@@ -2725,7 +2739,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
  {
      struct task_struct *fake;
  
-@@ -106,15 +92,9 @@
+@@ -106,15 +96,9 @@
      atomic_set(&current->seccomp.filter_count, 0);
      spin_unlock_irq(&current->sighand->siglock);
  
@@ -2742,7 +2756,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
  #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
      // https://github.com/torvalds/linux/commit/0d8315dddd2899f519fe1ca3d4d5cdaf44ea421e#diff-45eb79a57536d8eccfc1436932f093eb5c0b60d9361c39edb46581ad313e8987R556-R558
      fake->sighand = NULL;
-@@ -128,8 +108,6 @@
+@@ -128,8 +112,6 @@
  {
      int ret = 0;
      struct cred *cred;
@@ -2751,7 +2765,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
      struct root_profile *profile = NULL;
      struct user_struct *new_user;
  
-@@ -139,11 +117,6 @@
+@@ -139,11 +121,6 @@
          return -ENOMEM;
      }
  
@@ -2763,7 +2777,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
      if (test_thread_flag(TIF_KSU_DISABLE_ESCAPE_WITH_ROOT)) {
          pr_warn("TIF_KSU_DISABLE_ESCAPE_WITH_ROOT found, don't escape!\n");
          goto out_abort_creds;
-@@ -193,7 +166,11 @@
+@@ -193,7 +170,11 @@
      }
  #endif
  
@@ -2776,7 +2790,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
      memcpy(&cred->cap_permitted, &profile->capabilities.effective, sizeof(cred->cap_permitted));
      memcpy(&cred->cap_bset, &profile->capabilities.effective, sizeof(cred->cap_bset));
      if (profile->uid != 0) {
-@@ -206,16 +183,13 @@
+@@ -206,16 +187,13 @@
  
      commit_creds(cred);
  
@@ -2795,7 +2809,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.c nova_patched/kern
      setup_mount_ns(profile->namespaces);
      ksu_put_root_profile(profile);
      return 0;
-@@ -227,31 +201,22 @@
+@@ -227,31 +205,22 @@
      return ret;
  }
  
@@ -2850,17 +2864,19 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/policy/app_profile.h nova_patched/kern
  
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c nova_patched/kernel/preinit/preinit.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/preinit/preinit.c	2026-11-17 08:27:48.036707100 +0800
-@@ -12,7 +12,7 @@
++++ nova_patched/kernel/preinit/preinit.c	2026-11-17 10:30:44.453245300 +0800
+@@ -12,8 +12,9 @@
  
  #include "klog.h" // IWYU pragma: keep
  #include "util.h"
 -#include "hook/syscall_hook.h"
 +#include "runtime/ksud.h"
  #include "preinit/preinit.h"
++#include "hook/syscall_hook.h"
  
  #define INIT_PATH "/system/bin/init"
-@@ -80,84 +80,80 @@
+ 
+@@ -80,84 +81,80 @@
      ksu_preinit_release();
  }
  
@@ -2902,9 +2918,11 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c nova_patched/kernel/
  
      if (likely(!READ_ONCE(ksu_preinit_file)))
 -        return false;
--
++        return -EINVAL;
+ 
 -    if (!filename_user || !*filename_user)
 -        return false;
++    if (strcmp((*filename_ptr)->name, INIT_PATH) || !is_selinux_setup(argv_user))
 +        return -EINVAL;
  
 -    memset(path, 0, sizeof(path));
@@ -2914,9 +2932,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/preinit/preinit.c nova_patched/kernel/
 -
 -    if (strcmp(path, INIT_PATH) || !is_selinux_setup(argv_user))
 -        return false;
-+    if (strcmp((*filename_ptr)->name, INIT_PATH) || !is_selinux_setup(argv_user))
-+        return -EINVAL;
- 
+-
 -    // One shot: the runner's own exec of the real init must pass through.
      file = xchg(&ksu_preinit_file, NULL);
      if (!file)
@@ -3085,7 +3101,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud.h nova_patched/kernel/run
  #endif
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patched/kernel/runtime/ksud_integration.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/runtime/ksud_integration.c	2026-11-17 08:36:37.410395800 +0800
++++ nova_patched/kernel/runtime/ksud_integration.c	2026-11-17 10:30:44.457245500 +0800
 @@ -11,7 +11,6 @@
  #include <linux/fs.h>
  #include <linux/version.h>
@@ -3094,23 +3110,25 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
  #include <linux/printk.h>
  #include <linux/types.h>
  #include <linux/uaccess.h>
-@@ -28,10 +27,13 @@
+@@ -28,9 +27,15 @@
  #include "policy/feature.h"
  #include "feature/module_blacklist.h"
  #include "selinux/selinux.h"
 -#include "hook/syscall_hook.h"
 -#include "hook/syscall_event_bridge.h"
  #include "preinit/preinit.h"
- 
++#include "hook/syscall_event_bridge.h"
++#include "hook/syscall_hook.h"
++#include <linux/kprobes.h>
++
 +DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
 +DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);
 +DEFINE_STATIC_KEY_TRUE(is_init_second_stage_not_executed);
 +DEFINE_STATIC_KEY_TRUE(is_first_zygote);
-+
+ 
  // clang-format off
  static const char KERNEL_SU_RC[] =
-     "\n"
-@@ -52,45 +54,6 @@
+@@ -52,45 +57,6 @@
      "\n";
  // clang-format on
  
@@ -3156,7 +3174,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
  /*
   * count() counts the number of strings in array ARGV.
   */
-@@ -138,7 +101,7 @@
+@@ -138,7 +104,7 @@
      if (!p || IS_ERR(p))
          goto fail;
  
@@ -3165,7 +3183,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
          goto fail;
  
      buf[buf_len - 1] = '\0';
-@@ -149,44 +112,62 @@
+@@ -149,44 +115,62 @@
      return false;
  }
  
@@ -3254,7 +3272,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
  }
  
  static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);
-@@ -446,13 +427,16 @@
+@@ -446,13 +430,16 @@
          return;
      }
      rc_hooked = true;
@@ -3273,7 +3291,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
      pr_info("read init.rc, comm: %s, rc_count: %zu, module_rc: %zu\n", current->comm, ksu_rc_len, module_rc_len);
  
      // Now we need to proxy the read and modify the result!
-@@ -471,7 +455,7 @@
+@@ -471,7 +458,7 @@
      file->f_op = &fops_proxy;
  }
  
@@ -3282,7 +3300,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
  {
      struct file *file = fget(fd);
      if (!file) {
-@@ -492,12 +476,15 @@
+@@ -492,12 +479,15 @@
  {
      if (*type == EV_KEY && *code == KEY_VOLUMEDOWN) {
          int val = *value;
@@ -3301,7 +3319,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
          }
      }
  
-@@ -512,12 +499,11 @@
+@@ -512,12 +502,11 @@
          return true;
      }
  
@@ -3318,12 +3336,13 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
  
      pr_info("volumedown_pressed_count: %d\n", volumedown_pressed_count);
      if (is_volumedown_enough(volumedown_pressed_count)) {
-@@ -530,66 +516,13 @@
+@@ -530,66 +519,13 @@
      return false;
  }
  
 -static void ksu_execve_hook_ksud_common(const char __user *filename_user, const char __user *const __user *argv_user)
--{
++void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
+ {
 -    struct user_arg_ptr argv = { .ptr.native = argv_user };
 -    char path[32];
 -    long ret;
@@ -3347,8 +3366,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
 -}
 -
 -void ksu_execve_hook_ksud(const struct pt_regs *regs)
-+void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
- {
+-{
 -    const char __user *filename_user = (const char __user *)PT_REGS_SYSCALL_PARM1(regs);
 -    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
 -
@@ -3389,7 +3407,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
      if (file) {
          if (is_init_rc(file)) {
              pr_info("stat init.rc");
-@@ -599,84 +532,20 @@
+@@ -599,84 +535,20 @@
          fput(file);
      }
  
@@ -3410,7 +3428,10 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
 -        } else {
 -            pr_err("read statbuf 0x%lx failed", (unsigned long)st_size_ptr);
 -        }
--    }
++        extra = ksu_rc_len + module_rc_len;
++        *kstat_size_ptr = orig_size + extra;
++        pr_info("adding rc len: %lld -> %lld (static=%zu module=%zu)", orig_size, *kstat_size_ptr, ksu_rc_len, module_rc_len);
+     }
 -
 -    return ret;
 -}
@@ -3445,10 +3466,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/runtime/ksud_integration.c nova_patche
 -    static bool input_hook_stopped = false;
 -    if (input_hook_stopped) {
 -        return;
-+        extra = ksu_rc_len + module_rc_len;
-+        *kstat_size_ptr = orig_size + extra;
-+        pr_info("adding rc len: %lld -> %lld (static=%zu module=%zu)", orig_size, *kstat_size_ptr, ksu_rc_len, module_rc_len);
-     }
+-    }
 -    input_hook_stopped = true;
 -    schedule_work(&stop_input_hook_work);
  }
@@ -3874,7 +3892,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/sulog/event.h nova_patched/kernel/sulo
  
 diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kernel/supercall/dispatch.c
 --- SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c	2026-11-16 01:07:05.000000000 +0800
-+++ nova_patched/kernel/supercall/dispatch.c	2026-11-17 08:27:48.240472500 +0800
++++ nova_patched/kernel/supercall/dispatch.c	2026-11-17 10:30:44.460245400 +0800
 @@ -9,6 +9,8 @@
  #include <linux/uaccess.h>
  #include <linux/version.h>
@@ -3892,7 +3910,15 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
  #include "policy/app_profile.h"
  #include "sulog/event.h"
  #include "sulog/fd.h"
-@@ -55,19 +56,13 @@
+@@ -33,6 +34,7 @@
+ #include "extension/extension.h"
+ #include "extension/umount_paths.h"
+ #include "extension/version_spoof.h"
++#include "hook/tp_marker.h"
+ 
+ static int do_grant_root(void __user *arg)
+ {
+@@ -55,19 +57,13 @@
  
  #ifdef MODULE
      cmd.flags |= KSU_GET_INFO_FLAG_LKM;
@@ -3913,7 +3939,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
          cmd.flags |= KSU_GET_INFO_FLAG_PREINIT;
      }
  #if KSU_IS_PR_BUILD
-@@ -91,17 +86,11 @@
+@@ -91,17 +87,11 @@
  
  #ifdef MODULE
      cmd.flags |= KSU_GET_INFO_FLAG_LKM;
@@ -3931,7 +3957,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
  #if KSU_IS_PR_BUILD
      cmd.flags |= KSU_GET_INFO_FLAG_PR_BUILD;
  #endif
-@@ -134,12 +123,8 @@
+@@ -134,12 +124,8 @@
          services_started = false;
          if (!post_fs_data_lock) {
              post_fs_data_lock = true;
@@ -3946,7 +3972,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
          }
          break;
      }
-@@ -147,12 +132,9 @@
+@@ -147,12 +133,9 @@
          static bool boot_complete_lock = false;
          if (!boot_complete_lock) {
              boot_complete_lock = true;
@@ -3962,7 +3988,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
          }
          break;
      }
-@@ -406,7 +388,6 @@
+@@ -406,7 +389,6 @@
      ret = ksu_set_app_profile(&cmd.profile);
      if (!ret) {
          ksu_persistent_allow_list();
@@ -3970,7 +3996,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
      }
      return ret;
  }
-@@ -489,49 +470,32 @@
+@@ -489,49 +471,32 @@
      }
  
      switch (cmd.operation) {
@@ -4041,7 +4067,7 @@ diff -ruN SukiSU-Nova-c60f21b9e00e/kernel/supercall/dispatch.c nova_patched/kern
      }
      if (copy_to_user(arg, &cmd, sizeof(cmd))) {
          pr_err("manage_mark: copy_to_user failed\n");
-@@ -541,6 +505,95 @@
+@@ -541,6 +506,95 @@
      return 0;
  }
  
