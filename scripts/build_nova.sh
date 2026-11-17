@@ -100,6 +100,25 @@ git -C KernelSU log -1 --format='nova_commit=%H%ndate=%ad%nsubject=%s' --date=is
 # Nova builds susfs_extension.o + kpm.o unconditionally via kernel/Kbuild.
 grep -c 'susfs_extension' KernelSU/kernel/Kbuild | tee -a "$ARTIFACTS/nova-driver.txt"
 
+# ------------------ KSU-side SUSFS integration (KSU tree) ------------------
+# Nova's susfs_extension.c is only a *stub* handler; the real userspace control
+# path is susfs4ksu's 10_enable_susfs_for_ksu.patch. That patch targets official
+# KernelSU and does NOT apply cleanly to Nova's refactored tree (Makefile/Kbuild
+# split, execveat signature, setuid_hook, allowlist, supercall kprobe). We ship
+# a pre-ported patch (patches/novasus_10_enable_susfs_for_ksu.patch) built
+# against the pinned NOVA_REF: Kconfig symbols, supercall dispatch
+# (ksu_handle_sys_reboot), zygote-SID selinux helpers, susfs-aware setuid hook,
+# static-branch execveat tracking. Pinned NOVA_REF is mandatory for it.
+if [[ "$ENABLE_SUSFS" == "1" ]]; then
+  NOVA_PATCH="$REPO_ROOT/patches/novasus_10_enable_susfs_for_ksu.patch"
+  test -f "$NOVA_PATCH" || die "novasus KSU-side patch missing: $NOVA_PATCH"
+  [[ "$NOVA_REF" == "c60f21b9e00e"* ]] || die "novasus patch is ported for NOVA_REF c60f21b9e00e; got ${NOVA_REF:0:12} (re-port required)"
+  patch -p1 --forward --batch -d KernelSU < "$NOVA_PATCH" \
+    || die "novasus KSU-side patch failed to apply (NOVA_REF mismatch?)"
+  grep -q '^config KSU_SUSFS$' KernelSU/kernel/Kconfig || die "novasus patch applied but KSU_SUSFS Kconfig symbol missing"
+  info "KSU-side SUSFS integration patch applied (ksu_handle_sys_reboot + setuid/zygote-SID hooks)"
+fi
+
 # ------------------------------ SUSFS patch --------------------------------
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
   info "Applying SUSFS kernel patch (${SUSFS_BRANCH}) ..."
