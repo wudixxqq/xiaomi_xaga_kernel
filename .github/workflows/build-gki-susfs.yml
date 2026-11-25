@@ -1,0 +1,156 @@
+name: Build xaga GKI — BakaSU/SUSFS (optional FinaSU / SukiSU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      root_variant:
+        description: 'Root driver variant'
+        type: choice
+        required: true
+        default: bakasu
+        options: [bakasu, sukisu, finasu]
+      root_ref:
+        description: 'Root driver ref (blank = variant default / latest CI main for bakasu)'
+        required: false
+        default: ''
+      kernel_ref:
+        description: 'Base kernel commit (blank = ESK v4.0.1 pinned)'
+        required: false
+        default: ''
+      susfs_ref:
+        description: 'susfs4ksu branch (blank = gki-android12-5.10)'
+        required: false
+        default: ''
+      enable_susfs:
+        description: 'Integrate kernel-side SUSFS'
+        type: boolean
+        required: false
+        default: true
+      enable_modules:
+        description: 'Stage vendor_boot / vendor_dlkm modules'
+        type: boolean
+        required: false
+        default: true
+  push:
+    branches: [hyperos2-gki-ci]
+    paths:
+      - '.github/workflows/build-gki-susfs.yml'
+      - 'gki-build/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xaga-gki-${{ github.ref }}-${{ inputs.root_variant || 'bakasu' }}
+  cancel-in-progress: false
+
+env:
+  ROOT_VARIANT: ${{ inputs.root_variant || 'bakasu' }}
+  ROOT_REF: ${{ inputs.root_ref || '' }}
+  KERNEL_REF: ${{ inputs.kernel_ref || '' }}
+  SUSFS_REF: ${{ inputs.susfs_ref || '' }}
+  ENABLE_SUSFS: ${{ inputs.enable_susfs && '1' || '1' }}
+  ENABLE_MODULES: ${{ inputs.enable_modules && '1' || '1' }}
+  USE_CCACHE: '1'
+  JOBS: '4'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout builder files
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github
+            gki-build
+            patches
+            anykernel
+          sparse-checkout-cone-mode: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            device-tree-compiler gcc-aarch64-linux-gnu ccache curl git \
+            zip unzip zstd xz-utils kmod python3 rsync ca-certificates
+
+      - name: Cache AOSP clang r614150
+        uses: actions/cache@v4
+        with:
+          path: gki-build/work/clang
+          key: ${{ runner.os }}-xaga-clang-r614150-v1
+          restore-keys: ${{ runner.os }}-xaga-clang-r614150-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: gki-build/.ccache
+          key: ${{ runner.os }}-xaga-gki-${{ env.ROOT_VARIANT }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-xaga-gki-${{ env.ROOT_VARIANT }}-
+            ${{ runner.os }}-xaga-gki-
+
+      - name: Build kernel and AnyKernel3 package
+        run: |
+          set -o pipefail
+          chmod +x gki-build/build.sh
+          bash gki-build/build.sh 2>&1 | tee gki-build/out/console.log
+
+      - name: Export build metadata
+        run: |
+          test -s gki-build/out/build.env
+          cat gki-build/out/build.env >> "$GITHUB_ENV"
+          test -f "gki-build/out/${PACKAGE_NAME}-AnyKernel3.zip"
+          echo "### xaga GKI build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Variant: ${ROOT_VARIANT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Package: ${PACKAGE_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Kernel release: ${KERNEL_RELEASE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA256: ${ZIP_SHA256}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-r${{ github.run_number }}
+          path: |
+            gki-build/out/${{ env.PACKAGE_NAME }}-AnyKernel3.zip
+            gki-build/out/SHA256SUMS.txt
+            gki-build/out/kernel.config.txt
+            gki-build/out/kernel-banner.txt
+            gki-build/out/symbol-counts.txt
+            gki-build/out/susfs-hooked-files.txt
+            gki-build/out/build.env
+            gki-build/out/build.log
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish release asset for direct download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xaga-gki-r${{ github.run_number }}
+          name: xaga GKI r${{ github.run_number }} — ${{ env.ROOT_VARIANT }}
+          body: |
+            Reproducible xaga HyperOS2 GKI kernel build.
+            - Package: `${{ env.PACKAGE_NAME }}`
+            - Kernel: `${{ env.KERNEL_RELEASE }}`
+            - Root variant: `${{ env.ROOT_VARIANT }}`
+            - SHA256: `${{ env.ZIP_SHA256 }}`
+          files: |
+            gki-build/out/${{ env.PACKAGE_NAME }}-AnyKernel3.zip
+            gki-build/out/SHA256SUMS.txt
+            gki-build/out/kernel.config.txt
+            gki-build/out/build.env
+          fail_on_unmatched_files: false
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xaga-gki-failure-r${{ github.run_number }}
+          path: |
+            gki-build/out/**
+          if-no-files-found: warn
+          retention-days: 30
