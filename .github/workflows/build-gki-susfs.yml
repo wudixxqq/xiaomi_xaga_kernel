@@ -97,6 +97,7 @@ jobs:
       - name: Build kernel and AnyKernel3 package
         run: |
           set -o pipefail
+          mkdir -p gki-build/out
           chmod +x gki-build/build.sh
           bash gki-build/build.sh 2>&1 | tee gki-build/out/console.log
 
