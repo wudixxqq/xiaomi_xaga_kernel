@@ -401,8 +401,21 @@ ok "Kernel built"
 # 7. Verify compiled image
 # ---------------------------------------------------------------------------
 STAGE="verify"
-strings "$KERNEL_OUT/arch/arm64/boot/Image" | grep -m1 "Linux version ${KERNEL_RELEASE}" \
-    | tee "$OUT_DIR/kernel-banner.txt" >/dev/null || die "Kernel banner mismatch (expected $KERNEL_RELEASE)"
+# Do not use `strings | grep -m1` here: with pipefail, grep -m1 closes the pipe
+# early and strings exits 141, turning a successful match into a false failure.
+python3 - "$KERNEL_OUT/arch/arm64/boot/Image" "$KERNEL_RELEASE" "$OUT_DIR/kernel-banner.txt" <<'PYBANNER'
+import re, sys
+image, release, output = sys.argv[1:4]
+data = open(image, "rb").read()
+needle = b"Linux version " + release.encode()
+i = data.find(needle)
+if i < 0:
+    sys.exit("kernel banner mismatch: %s not found" % release)
+end = data.find(b"\x00", i)
+line = data[i:end if end > i else i + 300].decode("utf-8", "replace")
+open(output, "w", encoding="utf-8").write(line + "\n")
+print(line)
+PYBANNER
 KSU_STR="$(strings "$KERNEL_OUT/arch/arm64/boot/Image" | grep -c -i 'KernelSU' || true)"
 SUSFS_STR="$(strings "$KERNEL_OUT/arch/arm64/boot/Image" | grep -c -i 'susfs' || true)"
 CFI_N="$(strings "$KERNEL_OUT/arch/arm64/boot/Image" | grep -c '__cfi_check' || true)"

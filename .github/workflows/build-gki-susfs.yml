@@ -151,6 +151,8 @@ jobs:
         with:
           name: xaga-gki-failure-r${{ github.run_number }}
           path: |
-            gki-build/out/**
+            gki-build/out/*.log
+            gki-build/out/*.txt
+            gki-build/out/build.env
           if-no-files-found: warn
           retention-days: 30
