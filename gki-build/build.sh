@@ -374,8 +374,8 @@ grep -q '^CONFIG_KSU=y' "$KERNEL_OUT/.config" || die "CONFIG_KSU dropped"
 if [[ "$ENABLE_SUSFS" == "1" ]]; then
     grep -q '^CONFIG_KSU_SUSFS=y' "$KERNEL_OUT/.config" || die "CONFIG_KSU_SUSFS dropped by olddefconfig"
 fi
-KERNEL_RELEASE="$(make -s -C "$KERNEL" "${MAKEARGS[@]}" kernelrelease)"
-log "kernelrelease=$KERNEL_RELEASE"
+KERNEL_RELEASE_PROBE="$(make -s -C "$KERNEL" "${MAKEARGS[@]}" kernelrelease)"
+log "kernelrelease(probe)=$KERNEL_RELEASE_PROBE"
 
 grep -E 'CONFIG_(KSU|KSU_SUSFS[A-Z_]*|LTO_CLANG_THIN|LTO_NONE|CFI_CLANG|MODVERSIONS|KPROBES|KALLSYMS_ALL)=|^# CONFIG_LOCALVERSION_AUTO' \
     "$KERNEL_OUT/.config" > "$OUT_DIR/kernel.config.txt" || true
@@ -390,6 +390,11 @@ export SOURCE_DATE_EPOCH="$(date -u -d "$KBUILD_BUILD_TIMESTAMP" +%s)"
 make -C "$KERNEL" "${MAKEARGS[@]}" CC="$CC_VAL" HOSTCC="$CC_VAL" -j"$JOBS" \
     "${EXTRA_MAKE[@]}" Image modules 2>&1 | tee "$OUT_DIR/build.log"
 [[ -f "$KERNEL_OUT/arch/arm64/boot/Image" ]] || die "Image not produced"
+# Use the release string baked into this build, not a fresh `make kernelrelease`
+# probe (which can differ after setup.sh dirties the tree).
+KERNEL_RELEASE="$(tr -d '\n' < "$KERNEL_OUT/include/config/kernel.release")"
+[[ -n "$KERNEL_RELEASE" ]] || die "kernel.release missing"
+log "kernelrelease(final)=$KERNEL_RELEASE"
 if [[ "$ENABLE_MODULES" == "1" ]]; then
     fresh_dir "$MODULES_INSTALL"
     make -C "$KERNEL" "${MAKEARGS[@]}" CC="$CC_VAL" HOSTCC="$CC_VAL" \
