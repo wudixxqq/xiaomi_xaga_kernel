@@ -105,19 +105,22 @@ jobs:
         run: |
           test -s gki-build/out/build.env
           cat gki-build/out/build.env >> "$GITHUB_ENV"
-          test -f "gki-build/out/${PACKAGE_NAME}-AnyKernel3.zip"
+          # GITHUB_ENV values only reach LATER steps; use a local copy here.
+          PACKAGE_LOCAL="$(sed -n 's/^PACKAGE_NAME=//p' gki-build/out/build.env)"
+          test -n "$PACKAGE_LOCAL"
+          test -f "gki-build/out/${PACKAGE_LOCAL}-AnyKernel3.zip"
           echo "### xaga GKI build" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Variant: ${ROOT_VARIANT}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Package: ${PACKAGE_NAME}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Kernel release: ${KERNEL_RELEASE}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- SHA256: ${ZIP_SHA256}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Variant: $(sed -n 's/^ROOT_VARIANT=//p' gki-build/out/build.env)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Package: ${PACKAGE_LOCAL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Kernel release: $(sed -n 's/^KERNEL_RELEASE=//p' gki-build/out/build.env)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA256: $(sed -n 's/^ZIP_SHA256=//p' gki-build/out/build.env)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}-r${{ github.run_number }}
+          name: xaga-gki-r${{ github.run_number }}
           path: |
-            gki-build/out/${{ env.PACKAGE_NAME }}-AnyKernel3.zip
+            gki-build/out/*-AnyKernel3.zip
             gki-build/out/SHA256SUMS.txt
             gki-build/out/kernel.config.txt
             gki-build/out/kernel-banner.txt
@@ -140,7 +143,7 @@ jobs:
             - Root variant: `${{ env.ROOT_VARIANT }}`
             - SHA256: `${{ env.ZIP_SHA256 }}`
           files: |
-            gki-build/out/${{ env.PACKAGE_NAME }}-AnyKernel3.zip
+            gki-build/out/*-AnyKernel3.zip
             gki-build/out/SHA256SUMS.txt
             gki-build/out/kernel.config.txt
             gki-build/out/build.env
